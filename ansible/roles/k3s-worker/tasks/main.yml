@@ -1,0 +1,51 @@
+# ──────────────────────────────────────────────────────────────
+# K3s Worker Role — Tasks
+# Joins the worker node to the K3s cluster using the master token
+# ──────────────────────────────────────────────────────────────
+---
+- name: Open Flannel VXLAN port (8472)
+  ufw:
+    rule: allow
+    port: '8472'
+    proto: udp
+  tags: [firewall]
+
+- name: Open Kubelet port (10250)
+  ufw:
+    rule: allow
+    port: '10250'
+    proto: tcp
+  tags: [firewall]
+
+- name: Open NodePort range (30000-32767)
+  ufw:
+    rule: allow
+    port: '30000:32767'
+    proto: tcp
+  tags: [firewall]
+
+- name: Check if K3s agent is already installed
+  stat:
+    path: /usr/local/bin/k3s
+  register: k3s_agent_binary
+
+- name: Install K3s agent and join cluster
+  shell: |
+    curl -sfL https://get.k3s.io | K3S_URL=https://{{ hostvars[groups['k3s_master'][0]].k3s_master_ip }}:6443 \
+      K3S_TOKEN={{ hostvars[groups['k3s_master'][0]].k3s_token }} \
+      sh -s - agent \
+      --node-name k3s-worker-{{ inventory_hostname }}
+  args:
+    creates: /usr/local/bin/k3s
+  when: not k3s_agent_binary.stat.exists
+  notify: restart k3s-agent
+
+- name: Wait for K3s agent service to be active
+  systemd:
+    name: k3s-agent
+    state: started
+    enabled: yes
+  register: k3s_agent_status
+  retries: 5
+  delay: 10
+  until: k3s_agent_status is not failed

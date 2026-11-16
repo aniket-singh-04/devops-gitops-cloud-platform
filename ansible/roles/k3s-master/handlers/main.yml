@@ -1,0 +1,16 @@
+# ──────────────────────────────────────────────────────────────
+# K3s Master Role — Handlers
+# Triggered actions that only run when notified by a task
+# ──────────────────────────────────────────────────────────────
+---
+- name: restart k3s
+  systemd:
+    name: k3s
+    state: restarted
+    daemon_reload: yes
+
+- name: update kubeconfig server address
+  replace:
+    path: /home/ubuntu/.kube/config
+    regexp: 'https://127.0.0.1:6443'
+    replace: "https://{{ ansible_host }}:6443"
