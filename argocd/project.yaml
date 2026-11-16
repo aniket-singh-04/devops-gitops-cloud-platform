@@ -1,0 +1,34 @@
+# ──────────────────────────────────────────────────────────────
+# ArgoCD AppProject
+# Defines the scope and permissions for the devops-app project
+# Projects restrict which repos, clusters, and namespaces an
+# Application can use — a security best practice
+# ──────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: devops-project
+  namespace: argocd
+spec:
+  description: "DevOps showcase project — Node.js app on K3s"
+
+  # Only allow syncing from our GitHub repository
+  sourceRepos:
+    - "https://github.com/aniket-singh-04/Complete-deployment.git"
+
+  # Only allow deploying into the devops-app namespace
+  destinations:
+    - namespace: devops-app
+      server: https://kubernetes.default.svc
+
+  # Allow all standard Kubernetes resources
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  # Roles for RBAC (optional — useful in team setups)
+  roles:
+    - name: read-only
+      description: "Read-only access to the project"
+      policies:
+        - p, proj:devops-project:read-only, applications, get, devops-project/*, allow
