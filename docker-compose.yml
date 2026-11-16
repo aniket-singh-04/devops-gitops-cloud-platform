@@ -17,6 +17,7 @@ services:
     environment: # this is where you can define environment variables for your application and it is overriden by the .env file if it exists and not overridden by the docker-compose command line
       - NODE_ENV=production
       - PORT=4444
+      - MONGO_URI=${MONGO_URI:-}
 
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4444/health"]

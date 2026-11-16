@@ -13,6 +13,7 @@
     "build": "echo \"No build step required for this project\""
   },
   "dependencies": {
-    "express": "^5.3.0"
+    "express": "^5.3.0",
+    "mongoose": "^8.9.0"
   }
 }
