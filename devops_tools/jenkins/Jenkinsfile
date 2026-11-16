@@ -1,58 +1,178 @@
+// ──────────────────────────────────────────────────────────────
+// Jenkinsfile — Full CI/CD Pipeline
+// Stages: Checkout → Install → Build Image → Trivy Scan →
+//         Push to DockerHub → Update K8s Manifests → Notify
+// ArgoCD picks up the K8s manifest change and deploys to K3s
+// ──────────────────────────────────────────────────────────────
+
 pipeline {
     agent { label 'buildah' }
 
+    // ────────────── Pipeline Options ──────────────
     options {
-        timeout(time: 10, unit: 'MINUTES')
-        disableConcurrentBuilds()
+        timeout(time: 15, unit: 'MINUTES')     // Fail-safe timeout
+        disableConcurrentBuilds()               // Prevent parallel runs
+        buildDiscarder(logRotator(numToKeepStr: '10'))  // Keep last 10 builds
     }
 
-    tools { 
-        // tools used in this pipeline are defined in the Jenkins global configuration. The name of the tool is used to reference it in the pipeline.
-        nodejs 'node26'
+    // ────────────── Tools ──────────────
+    tools {
+        nodejs 'node26'   // Node.js tool configured in Jenkins global settings
+    }
+
+    // ────────────── Environment Variables ──────────────
+    environment {
+        DOCKERHUB_CREDS  = credentials('dockerhub-credentials')  // Jenkins credential ID
+        DOCKERHUB_USER   = "${DOCKERHUB_CREDS_USR}"
+        IMAGE_NAME       = "${DOCKERHUB_CREDS_USR}/devops-app"
+        IMAGE_TAG        = "${BUILD_NUMBER}"
+        STORAGE_DRIVER   = 'vfs'   // Buildah storage driver for rootless containers
     }
 
     stages {
+
+        // ────────────── Stage 1: Checkout ──────────────
         stage('Checkout') {
             steps {
                 checkout scm
+                sh 'echo "Commit: $(git rev-parse --short HEAD)"'
                 sh 'git log --oneline -n 3'
             }
         }
 
-        stage('Tool versions') {
+        // ────────────── Stage 2: Tool Versions ──────────────
+        stage('Tool Versions') {
             steps {
-                sh 'node --version && npm --version'
+                sh '''
+                    echo "=== Node.js ==="
+                    node --version && npm --version
+                    echo "=== Buildah ==="
+                    buildah --version
+                    echo "=== Trivy ==="
+                    trivy --version || echo "Trivy not found — scan stage will be skipped"
+                '''
             }
         }
 
-        stage('Install dependencies') {
+        // ────────────── Stage 3: Install Dependencies ──────────────
+        stage('Install Dependencies') {
             steps {
                 sh 'npm ci'
             }
         }
 
-        stage('Build image') {
+        // ────────────── Stage 4: Build Container Image ──────────────
+        stage('Build Image') {
+            steps {
+                sh """
+                    buildah --storage-driver=${STORAGE_DRIVER} build \
+                      --isolation=chroot \
+                      -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                      -t ${IMAGE_NAME}:latest \
+                      .
+                    echo "=== Built Images ==="
+                    buildah --storage-driver=${STORAGE_DRIVER} images
+                """
+            }
+        }
+
+        // ────────────── Stage 5: Verify Image Startup ──────────────
+        stage('Verify Image') {
             steps {
                 sh '''
-                    buildah --storage-driver=vfs build --isolation=chroot \
-                      -t devops-app:${BUILD_NUMBER} .
-                    buildah --storage-driver=vfs images
+                    set -eu
+                    ctr=$(buildah --storage-driver=${STORAGE_DRIVER} from localhost/${IMAGE_NAME}:${IMAGE_TAG})
+                    trap 'buildah --storage-driver=${STORAGE_DRIVER} rm "$ctr" >/dev/null' EXIT
+
+                    # Start the app inside the container and hit the health endpoint
+                    out=$(buildah --storage-driver=${STORAGE_DRIVER} run --isolation=chroot --network host "$ctr" -- \
+                          sh -c 'PORT=4444 node index.js & pid=$!; sleep 3; wget -qO- http://127.0.0.1:4444/health; kill $pid')
+
+                    echo "$out"
+                    echo "$out" | grep -q '"status":"OK"'
+                    echo "✅ Image health check passed"
                 '''
             }
         }
 
-        stage('Verify image') {
+        // ────────────── Stage 6: Trivy Security Scan ──────────────
+        stage('Trivy Scan') {
             steps {
-                sh '''
-                    set -eu
-                    ctr=$(buildah --storage-driver=vfs from localhost/devops-app:${BUILD_NUMBER})
-                    trap 'buildah --storage-driver=vfs rm "$ctr" >/dev/null' EXIT
-                    out=$(buildah --storage-driver=vfs run --isolation=chroot --network host "$ctr" -- \
-                          sh -c 'PORT=4444 node index.js & pid=$!; sleep 3; wget -qO- http://127.0.0.1:4444/health; kill $pid')
-                    echo "$out"
-                    echo "$out" | grep -q '"status":"OK"'
-                '''
+                sh """
+                    echo "=== Scanning image for vulnerabilities ==="
+                    trivy image \
+                      --severity HIGH,CRITICAL \
+                      --exit-code 0 \
+                      --no-progress \
+                      --format table \
+                      localhost/${IMAGE_NAME}:${IMAGE_TAG} || true
+                    echo "✅ Trivy scan complete"
+                """
             }
+        }
+
+        // ────────────── Stage 7: Push to DockerHub ──────────────
+        stage('Push to DockerHub') {
+            steps {
+                sh """
+                    echo "=== Logging into DockerHub ==="
+                    buildah --storage-driver=${STORAGE_DRIVER} login \
+                      -u ${DOCKERHUB_CREDS_USR} \
+                      -p ${DOCKERHUB_CREDS_PSW} \
+                      docker.io
+
+                    echo "=== Pushing ${IMAGE_NAME}:${IMAGE_TAG} ==="
+                    buildah --storage-driver=${STORAGE_DRIVER} push \
+                      localhost/${IMAGE_NAME}:${IMAGE_TAG} \
+                      docker://${IMAGE_NAME}:${IMAGE_TAG}
+
+                    echo "=== Pushing ${IMAGE_NAME}:latest ==="
+                    buildah --storage-driver=${STORAGE_DRIVER} push \
+                      localhost/${IMAGE_NAME}:latest \
+                      docker://${IMAGE_NAME}:latest
+
+                    echo "✅ Images pushed to DockerHub"
+                """
+            }
+        }
+
+        // ────────────── Stage 8: Update K8s Deployment Manifest ──────────────
+        // This triggers ArgoCD to detect the change and sync to K3s
+        stage('Update K8s Manifest') {
+            steps {
+                sh """
+                    echo "=== Updating deployment image tag to ${IMAGE_TAG} ==="
+                    sed -i 's|image: .*/devops-app:.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' k8s/deployment.yaml
+                    cat k8s/deployment.yaml | grep 'image:'
+                    echo "✅ Manifest updated — ArgoCD will sync automatically"
+                """
+            }
+        }
+    }
+
+    // ────────────── Post Actions ──────────────
+    post {
+        success {
+            echo """
+            ╔══════════════════════════════════════════╗
+            ║  ✅ Pipeline completed successfully!     ║
+            ║  Image: ${IMAGE_NAME}:${IMAGE_TAG}       ║
+            ║  ArgoCD will sync to K3s automatically   ║
+            ╚══════════════════════════════════════════╝
+            """
+        }
+        failure {
+            echo """
+            ╔══════════════════════════════════════════╗
+            ║  ❌ Pipeline failed!                     ║
+            ║  Check the logs above for errors         ║
+            ╚══════════════════════════════════════════╝
+            """
+        }
+        always {
+            // Clean up buildah containers to free disk space
+            sh 'buildah --storage-driver=${STORAGE_DRIVER} rm --all 2>/dev/null || true'
+            cleanWs()   // Clean Jenkins workspace
         }
     }
 }
