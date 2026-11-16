@@ -230,6 +230,43 @@ Jenkins builds, scans, and pushes the image. ArgoCD detects the manifest change 
 
 ---
 
+## Makefile Automation CLI Cheatsheet
+
+The root `Makefile` provides unified shortcuts for all tools in this project:
+
+```bash
+# ── Docker & Local Dev ──
+make build          # Build application Docker image
+make up-build       # Build and run containers in background
+make test-api       # Curl test / and /health endpoints
+make scan           # Run Trivy vulnerability scan
+make clean          # Remove containers, volumes, networks
+
+# ── Terraform (AWS) ──
+make tf-init        # Initialize Terraform in devops_tools/terraform
+make tf-plan        # Show Terraform planned infrastructure
+make tf-apply       # Provision AWS VPC, Subnets, EC2 nodes
+make tf-output      # Display IPs and MongoDB Atlas whitelist CIDRs
+make tf-destroy     # Teardown all AWS cloud resources
+
+# ── Ansible (K3s) ──
+make ansible-ping   # Test SSH connectivity to cluster nodes
+make ansible-deploy # Execute playbook to install and configure K3s
+
+# ── Kubernetes & ArgoCD ──
+make k8s-apply      # Apply Kubernetes manifests (namespace, deployment, secret, etc.)
+make k8s-status     # View pods, svc, ingress, and HPA in devops-app namespace
+make argocd-apply   # Apply ArgoCD Project & Application definitions
+make argocd-status  # Check ArgoCD sync and health status
+
+# ── Jenkins CI/CD ──
+make jenkins-up     # Launch local Jenkins and Buildah agent
+make jenkins-logs   # Follow Jenkins server logs
+make jenkins-down   # Stop Jenkins services
+```
+
+---
+
 ## Security
 
 - No credentials stored in the repository
