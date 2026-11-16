@@ -50,3 +50,13 @@ output "ssh_worker" {
   description = "SSH command to connect to the K3s worker"
   value       = "ssh -i ~/.ssh/${var.key_pair_name}.pem ubuntu@${aws_instance.k3s_worker.public_ip}"
 }
+
+# ────────────── MongoDB Atlas Whitelist IPs ──────────────
+
+output "mongodb_atlas_whitelist_ips" {
+  description = "Public CIDR IPs of K3s nodes to add in MongoDB Atlas Network Access list"
+  value = [
+    "${aws_instance.k3s_master.public_ip}/32",
+    "${aws_instance.k3s_worker.public_ip}/32"
+  ]
+}
