@@ -37,6 +37,7 @@ Developer → Git Push → Jenkins CI/CD → DockerHub → ArgoCD → K3s Cluste
 | **K3s** | Lightweight Kubernetes cluster | `devops_tools/k8s/` |
 | **ArgoCD** | GitOps continuous deployment | `devops_tools/argocd/` |
 | **AWS** | Cloud provider (VPC, EC2) | `devops_tools/terraform/` |
+| **MongoDB Atlas** | Managed NoSQL cloud database | `db.js`, `devops_tools/k8s/secret.yaml` |
 | **Trivy** | Container image vulnerability scanning | Integrated in Jenkins |
 | **Buildah** | Rootless container image builds | Integrated in Jenkins |
 
@@ -44,12 +45,12 @@ Developer → Git Push → Jenkins CI/CD → DockerHub → ArgoCD → K3s Cluste
 
 ## Application
 
-A Node.js HTTP service built with Express.js:
+A Node.js HTTP service built with Express.js and Mongoose:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /` | Server information (port, environment) |
-| `GET /health` | Health check (used by K8s probes) |
+| `GET /` | Server information & MongoDB connection status |
+| `GET /health` | Health check & DB heartbeat (used by K8s probes) |
 
 ---
 
@@ -58,8 +59,10 @@ A Node.js HTTP service built with Express.js:
 ```
 .
 ├── app.js                          # Express.js routes
+├── db.js                           # MongoDB Atlas connection & pooling logic
 ├── index.js                        # Application entry point
-├── package.json                    # Node.js dependencies
+├── package.json                    # Node.js dependencies (express, mongoose)
+├── .env.example                    # Sample environment variables (MONGO_URI)
 ├── Dockerfile                      # Multi-stage container build
 ├── docker-compose.yml              # Local development setup
 ├── Makefile                        # CLI shortcuts for Docker
@@ -88,7 +91,8 @@ A Node.js HTTP service built with Express.js:
     │
     ├── k8s/                        # Kubernetes Manifests
     │   ├── namespace.yaml          # App namespace
-    │   ├── deployment.yaml         # Pod spec with health probes
+    │   ├── secret.yaml             # MongoDB Atlas connection URI secret
+    │   ├── deployment.yaml         # Pod spec with health probes & DB env
     │   ├── service.yaml            # ClusterIP service
     │   ├── ingress.yaml            # Traefik ingress routing
     │   └── hpa.yaml                # Horizontal Pod Autoscaler
@@ -99,7 +103,7 @@ A Node.js HTTP service built with Express.js:
         ├── vpc.tf                  # VPC, subnets, IGW, routes
         ├── security-groups.tf      # Firewall rules for K3s
         ├── ec2.tf                  # Master and worker instances
-        ├── outputs.tf              # IPs and SSH commands
+        ├── outputs.tf              # IPs, SSH commands, Atlas whitelist CIDRs
         └── terraform.tfvars.example # Example variable values
 ```
 
@@ -130,9 +134,26 @@ terraform plan
 terraform apply
 ```
 
-Note the output IPs — you need them for Ansible.
+Note the outputs:
+- `k3s_master_public_ip` & `k3s_worker_public_ip` — used in Ansible inventory.
+- `mongodb_atlas_whitelist_ips` — the exact CIDRs (`<IP>/32`) to whitelist in **MongoDB Atlas Network Access**.
 
-### Step 2 — Configure Servers with Ansible
+---
+
+### Step 2 — Configure MongoDB Atlas Network Access
+
+Before running the cluster workloads, allow outbound connections from your K3s EC2 nodes:
+1. Log in to [MongoDB Atlas Console](https://cloud.mongodb.com/).
+2. Navigate to **Security** ➜ **Network Access** ➜ **IP Access List** ➜ Click **Add IP Address**.
+3. Add the two node public IPs from Terraform output (`mongodb_atlas_whitelist_ips`):
+   - `k3s_master_public_ip/32` (e.g. `13.233.xx.xx/32`)
+   - `k3s_worker_public_ip/32` (e.g. `13.126.xx.xx/32`)
+   *(For temporary testing / local dev, add your current public IP via `curl ifconfig.me`/32 or use `0.0.0.0/0` with strong authentication).*
+4. Under **Database Access**, create a user with `readWriteAnyDatabase` and copy the connection string.
+
+---
+
+### Step 3 — Configure Servers with Ansible
 
 ```bash
 cd devops_tools/ansible
@@ -147,7 +168,7 @@ ansible-playbook playbooks/site.yml
 
 This installs K3s on the master and joins the worker to the cluster.
 
-### Step 3 — Install ArgoCD
+### Step 4 — Install ArgoCD & Configure Database Secret
 
 ```bash
 # SSH into the master node
@@ -158,19 +179,27 @@ kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 kubectl wait --for=condition=ready pod --all -n argocd --timeout=300s
 
+# Create application namespace
+kubectl create namespace devops-app --dry-run=client -o yaml | kubectl apply -f -
+
+# Create MongoDB secret (replace with your actual Atlas connection URI)
+kubectl create secret generic mongodb-secret -n devops-app \
+  --from-literal=MONGO_URI="mongodb+srv://<username>:<password>@cluster0.mongodb.net/devops_db?retryWrites=true&w=majority" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 # Apply the GitOps configuration
 kubectl apply -f devops_tools/argocd/project.yaml
 kubectl apply -f devops_tools/argocd/application.yaml
 ```
 
-### Step 4 — Configure Jenkins
+### Step 5 — Configure Jenkins
 
 1. Access Jenkins at `http://localhost:8080`
 2. Add DockerHub credentials (ID: `dockerhub-credentials`)
 3. Create a Pipeline job pointing to this repository (`devops_tools/jenkins/Jenkinsfile`)
 4. The Jenkinsfile handles the rest automatically
 
-### Step 5 — Deploy
+### Step 6 — Deploy
 
 Push any code change to `main`:
 
