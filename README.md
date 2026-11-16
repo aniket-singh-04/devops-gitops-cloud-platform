@@ -32,11 +32,11 @@ Developer → Git Push → Jenkins CI/CD → DockerHub → ArgoCD → K3s Cluste
 |------|---------|-----------|
 | **Docker** | Containerise the application | `Dockerfile`, `docker-compose.yml` |
 | **Jenkins** | CI/CD pipeline (build, scan, push) | `devops_tools/jenkins/` |
-| **Terraform** | AWS infrastructure provisioning | `terraform/` |
-| **Ansible** | Server configuration and K3s install | `ansible/` |
-| **K3s** | Lightweight Kubernetes cluster | `k8s/` |
-| **ArgoCD** | GitOps continuous deployment | `argocd/` |
-| **AWS** | Cloud provider (VPC, EC2) | `terraform/` |
+| **Terraform** | AWS infrastructure provisioning | `devops_tools/terraform/` |
+| **Ansible** | Server configuration and K3s install | `devops_tools/ansible/` |
+| **K3s** | Lightweight Kubernetes cluster | `devops_tools/k8s/` |
+| **ArgoCD** | GitOps continuous deployment | `devops_tools/argocd/` |
+| **AWS** | Cloud provider (VPC, EC2) | `devops_tools/terraform/` |
 | **Trivy** | Container image vulnerability scanning | Integrated in Jenkins |
 | **Buildah** | Rootless container image builds | Integrated in Jenkins |
 
@@ -64,43 +64,43 @@ A Node.js HTTP service built with Express.js:
 ├── docker-compose.yml              # Local development setup
 ├── Makefile                        # CLI shortcuts for Docker
 │
-├── terraform/                      # AWS Infrastructure as Code
-│   ├── providers.tf                # AWS provider and backend config
-│   ├── variables.tf                # Input variables
-│   ├── vpc.tf                      # VPC, subnets, IGW, routes
-│   ├── security-groups.tf          # Firewall rules for K3s
-│   ├── ec2.tf                      # Master and worker instances
-│   ├── outputs.tf                  # IPs and SSH commands
-│   └── terraform.tfvars.example    # Example variable values
-│
-├── ansible/                        # Configuration Management
-│   ├── ansible.cfg                 # Ansible settings
-│   ├── inventory/
-│   │   └── hosts.ini.example       # Example inventory
-│   ├── playbooks/
-│   │   └── site.yml                # Main playbook entry point
-│   └── roles/
-│       ├── common/                 # Base packages, kernel tuning
-│       ├── k3s-master/             # K3s server installation
-│       └── k3s-worker/             # K3s agent join cluster
-│
-├── k8s/                            # Kubernetes Manifests
-│   ├── namespace.yaml              # App namespace
-│   ├── deployment.yaml             # Pod spec with health probes
-│   ├── service.yaml                # ClusterIP service
-│   ├── ingress.yaml                # Traefik ingress routing
-│   └── hpa.yaml                    # Horizontal Pod Autoscaler
-│
-├── argocd/                         # GitOps Configuration
-│   ├── project.yaml                # ArgoCD project (RBAC)
-│   ├── application.yaml            # ArgoCD app (sync config)
-│   └── README.md                   # ArgoCD setup guide
-│
-└── devops_tools/
-    └── jenkins/
-        ├── Jenkinsfile             # CI/CD pipeline definition
-        ├── docker-compose.yml      # Jenkins server setup
-        └── .env                    # Jenkins environment (not committed)
+└── devops_tools/                   # Unified DevOps Tooling & Infrastructure
+    ├── ansible/                    # Configuration Management
+    │   ├── ansible.cfg             # Ansible settings
+    │   ├── inventory/
+    │   │   └── hosts.ini.example   # Example inventory
+    │   ├── playbooks/
+    │   │   └── site.yml            # Main playbook entry point
+    │   └── roles/
+    │       ├── common/             # Base packages, kernel tuning
+    │       ├── k3s-master/         # K3s server installation
+    │       └── k3s-worker/         # K3s agent join cluster
+    │
+    ├── argocd/                     # GitOps Configuration
+    │   ├── project.yaml            # ArgoCD project (RBAC)
+    │   ├── application.yaml        # ArgoCD app (sync config)
+    │   └── README.md               # ArgoCD setup guide
+    │
+    ├── jenkins/                    # CI/CD Pipeline
+    │   ├── Jenkinsfile             # CI/CD pipeline definition
+    │   ├── docker-compose.yml      # Jenkins server setup
+    │   └── .env                    # Jenkins environment (not committed)
+    │
+    ├── k8s/                        # Kubernetes Manifests
+    │   ├── namespace.yaml          # App namespace
+    │   ├── deployment.yaml         # Pod spec with health probes
+    │   ├── service.yaml            # ClusterIP service
+    │   ├── ingress.yaml            # Traefik ingress routing
+    │   └── hpa.yaml                # Horizontal Pod Autoscaler
+    │
+    └── terraform/                  # AWS Infrastructure as Code
+        ├── providers.tf            # AWS provider and backend config
+        ├── variables.tf            # Input variables
+        ├── vpc.tf                  # VPC, subnets, IGW, routes
+        ├── security-groups.tf      # Firewall rules for K3s
+        ├── ec2.tf                  # Master and worker instances
+        ├── outputs.tf              # IPs and SSH commands
+        └── terraform.tfvars.example # Example variable values
 ```
 
 ---
@@ -118,7 +118,7 @@ A Node.js HTTP service built with Express.js:
 ### Step 1 — Provision AWS Infrastructure
 
 ```bash
-cd terraform
+cd devops_tools/terraform
 
 # Copy and edit the variables
 cp terraform.tfvars.example terraform.tfvars
@@ -135,7 +135,7 @@ Note the output IPs — you need them for Ansible.
 ### Step 2 — Configure Servers with Ansible
 
 ```bash
-cd ansible
+cd devops_tools/ansible
 
 # Create inventory from the example
 cp inventory/hosts.ini.example inventory/hosts.ini
@@ -159,15 +159,15 @@ kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/st
 kubectl wait --for=condition=ready pod --all -n argocd --timeout=300s
 
 # Apply the GitOps configuration
-kubectl apply -f argocd/project.yaml
-kubectl apply -f argocd/application.yaml
+kubectl apply -f devops_tools/argocd/project.yaml
+kubectl apply -f devops_tools/argocd/application.yaml
 ```
 
 ### Step 4 — Configure Jenkins
 
 1. Access Jenkins at `http://localhost:8080`
 2. Add DockerHub credentials (ID: `dockerhub-credentials`)
-3. Create a Pipeline job pointing to this repository
+3. Create a Pipeline job pointing to this repository (`devops_tools/jenkins/Jenkinsfile`)
 4. The Jenkinsfile handles the rest automatically
 
 ### Step 5 — Deploy
@@ -216,7 +216,7 @@ Jenkins builds, scans, and pushes the image. ArgoCD detects the manifest change 
 
 ```bash
 # Destroy AWS infrastructure
-cd terraform && terraform destroy
+cd devops_tools/terraform && terraform destroy
 
 # Remove local Docker resources
 make clean

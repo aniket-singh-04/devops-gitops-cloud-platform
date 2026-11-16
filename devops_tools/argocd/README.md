@@ -31,10 +31,10 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 ```bash
 # Apply the AppProject first (defines permissions)
-kubectl apply -f argocd/project.yaml
+kubectl apply -f devops_tools/argocd/project.yaml
 
 # Apply the Application (starts GitOps sync)
-kubectl apply -f argocd/application.yaml
+kubectl apply -f devops_tools/argocd/application.yaml
 
 # Check sync status
 kubectl -n argocd get applications
@@ -61,6 +61,6 @@ argocd app get devops-app
 
 1. Developer pushes code changes to `main` branch
 2. Jenkins pipeline builds a new Docker image and pushes to DockerHub
-3. Jenkins updates the image tag in `k8s/deployment.yaml`
+3. Jenkins updates the image tag in `devops_tools/k8s/deployment.yaml`
 4. ArgoCD detects the Git change and syncs to the K3s cluster
 5. K3s performs a rolling update with zero downtime

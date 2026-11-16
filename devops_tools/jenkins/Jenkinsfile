@@ -142,8 +142,8 @@ pipeline {
             steps {
                 sh """
                     echo "=== Updating deployment image tag to ${IMAGE_TAG} ==="
-                    sed -i 's|image: .*/devops-app:.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' k8s/deployment.yaml
-                    cat k8s/deployment.yaml | grep 'image:'
+                    sed -i 's|image: .*/devops-app:.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' devops_tools/k8s/deployment.yaml
+                    cat devops_tools/k8s/deployment.yaml | grep 'image:'
                     echo "✅ Manifest updated — ArgoCD will sync automatically"
                 """
             }

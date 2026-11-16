@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────────────────────
 # ArgoCD Application
 # Defines what to deploy, where to deploy, and how to sync
-# ArgoCD watches the k8s/ directory in Git and automatically
+# ArgoCD watches the devops_tools/k8s/ directory in Git and automatically
 # syncs any changes to the K3s cluster (GitOps workflow)
 # ──────────────────────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
@@ -20,7 +20,7 @@ spec:
   source:
     repoURL: https://github.com/aniket-singh-04/Complete-deployment.git
     targetRevision: main
-    path: k8s                # Directory containing Kubernetes manifests
+    path: devops_tools/k8s   # Directory containing Kubernetes manifests
 
   # ────────────── Destination — where to deploy ──────────────
   destination:
