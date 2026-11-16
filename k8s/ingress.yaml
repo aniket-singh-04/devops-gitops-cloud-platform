@@ -1,0 +1,29 @@
+# ──────────────────────────────────────────────────────────────
+# Ingress
+# Routes external HTTP traffic to the application service
+# Uses Traefik (default K3s ingress controller)
+# ──────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devops-app-ingress
+  namespace: devops-app
+  labels:
+    app: devops-app
+  annotations:
+    # Traefik-specific annotations (K3s ships Traefik by default)
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    # Replace with your domain or use the EC2 public IP
+    - host: devops-app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: devops-app-svc
+                port:
+                  number: 80

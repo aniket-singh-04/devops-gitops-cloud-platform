@@ -1,0 +1,11 @@
+# ──────────────────────────────────────────────────────────────
+# Namespace
+# Isolates the application resources from other workloads
+# ──────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devops-app
+  labels:
+    app: devops-app
+    managed-by: argocd

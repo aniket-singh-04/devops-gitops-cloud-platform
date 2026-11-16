@@ -1,0 +1,73 @@
+# ──────────────────────────────────────────────────────────────
+# Deployment
+# Manages the application pods with rolling update strategy
+# Image tag is updated by the CI/CD pipeline on each build
+# ──────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-app
+  namespace: devops-app
+  labels:
+    app: devops-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: devops-app
+
+  # Rolling update — zero downtime deployments
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1            # Allow 1 extra pod during update
+      maxUnavailable: 0      # Never take a running pod down first
+
+  template:
+    metadata:
+      labels:
+        app: devops-app
+    spec:
+      containers:
+        - name: devops-app
+          # Image tag is updated by Jenkins pipeline or ArgoCD image updater
+          image: DOCKERHUB_USERNAME/devops-app:latest
+          ports:
+            - containerPort: 4444
+              protocol: TCP
+
+          # Environment variables for the Node.js application
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "4444"
+
+          # Resource limits prevent noisy-neighbour problems
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+
+          # Liveness probe — restart the pod if the app crashes
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4444
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe — only send traffic when the app is ready
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4444
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
