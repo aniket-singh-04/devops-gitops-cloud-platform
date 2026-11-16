@@ -1,48 +1,70 @@
-# Node.js dependencies
+# ──────────────────────────────────────────────
+# Node.js
+# ──────────────────────────────────────────────
 node_modules/
-
-# Environment variables and secrets
-.env
-.env.local
-.env.production
-
-# Logs
-*.log
 npm-debug.log*
 
+# ──────────────────────────────────────────────
+# Environment variables and secrets
+# ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ──────────────────────────────────────────────
+# Logs and runtime
+# ──────────────────────────────────────────────
+*.log
+*.pid
+*.seed
+
+# ──────────────────────────────────────────────
 # Docker
+# ──────────────────────────────────────────────
 .docker/
 docker-compose.override.yml
 
-# Build files
+# ──────────────────────────────────────────────
+# Build and test output
+# ──────────────────────────────────────────────
 dist/
 build/
-
-# Testing
 coverage/
 
-# IDE
-.vscode/
-.idea/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Temporary files
-tmp/
-temp/
-
-# Runtime files
-*.pid
-*.seed
-
-
-# Runtime
-*.pid
-*.seed
-
+# ──────────────────────────────────────────────
 # Terraform
+# ──────────────────────────────────────────────
 .terraform/
 *.tfstate
 *.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# ──────────────────────────────────────────────
+# Ansible
+# ──────────────────────────────────────────────
+*.retry
+ansible/inventory/hosts.ini
+
+# ──────────────────────────────────────────────
+# Kubernetes
+# ──────────────────────────────────────────────
+kubeconfig
+*.kubeconfig
+
+# ──────────────────────────────────────────────
+# IDE and OS
+# ──────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ──────────────────────────────────────────────
+# Temporary files
+# ──────────────────────────────────────────────
+tmp/
+temp/
