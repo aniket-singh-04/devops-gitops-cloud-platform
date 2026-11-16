@@ -1,0 +1,28 @@
+# ──────────────────────────────────────────────────────────────
+# Example terraform.tfvars
+# Copy this file to terraform.tfvars and fill in your values
+# NEVER commit terraform.tfvars — it contains sensitive data
+# ──────────────────────────────────────────────────────────────
+
+# AWS region for all resources
+aws_region = "ap-south-1"
+
+# Project metadata
+project_name = "devops-project"
+environment  = "dev"
+
+# Networking
+vpc_cidr            = "10.0.0.0/16"
+public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+availability_zones  = ["ap-south-1a", "ap-south-1b"]
+
+# EC2 — update ami_id if using a different region
+instance_type = "t3.medium"
+ami_id        = "ami-0f5ee92e2d63afc18"   # Ubuntu 22.04 LTS in ap-south-1
+key_pair_name = "your-key-pair-name"       # CHANGE THIS to your AWS key pair
+
+# Security — restrict SSH to your IP in production
+allowed_ssh_cidr = "0.0.0.0/0"            # CHANGE THIS to your-ip/32
+
+# DockerHub
+dockerhub_username = "your-dockerhub-username"  # CHANGE THIS
