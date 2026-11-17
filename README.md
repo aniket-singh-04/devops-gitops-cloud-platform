@@ -119,7 +119,35 @@ A Node.js HTTP service built with Express.js and Mongoose:
 - Docker and Docker Compose
 - SSH key pair created in AWS (`key_pair_name`)
 
-### Step 1 — Provision AWS Infrastructure
+---
+
+### ⚡ Option A: One-Command Automated Deployment (Recommended)
+
+Run the full end-to-end pipeline with a single command. It provisions AWS infrastructure, creates Ansible inventories dynamically, hardens nodes, installs K3s, and configures ArgoCD GitOps.
+
+> [!IMPORTANT]
+> **Automatic Failure Reversal**: If any step or command fails during deployment, the orchestrator automatically intercepts the error and rolls back all created resources in reverse order, ensuring zero orphaned cloud resources or unexpected AWS bills.
+
+```bash
+# 1. Copy and configure your AWS variables once
+cp devops_tools/terraform/terraform.tfvars.example devops_tools/terraform/terraform.tfvars
+# Set your actual key_pair_name and dockerhub_username
+
+# 2. Execute full deployment in one command
+make deploy
+# OR: ./orchestrate.sh deploy
+```
+
+#### Smooth On-Demand Rollback (At Any Time)
+Even from a smooth, healthy running state, you can tear down everything cleanly with zero residual costs:
+```bash
+make rollback
+# OR: ./orchestrate.sh rollback
+```
+
+---
+
+### 🛠️ Option B: Step-by-Step Manual Deployment
 
 ```bash
 cd devops_tools/terraform
@@ -235,6 +263,12 @@ Jenkins builds, scans, and pushes the image. ArgoCD detects the manifest change 
 The root `Makefile` provides unified shortcuts for all tools in this project:
 
 ```bash
+# ── ⚡ One-Command Orchestration & Rollback ──
+make deploy         # One-command full deployment (with auto-rollback on error)
+make rollback       # Smooth on-demand teardown of cluster & cloud resources
+make deploy-status  # Check live status of deployment and infrastructure
+make deploy-plan    # Run preflight check and show Terraform execution plan
+
 # ── Docker & Local Dev ──
 make build          # Build application Docker image
 make up-build       # Build and run containers in background
@@ -278,11 +312,14 @@ make jenkins-down   # Stop Jenkins services
 
 ---
 
-## Cleanup
+## Cleanup & Rollback
 
 ```bash
-# Destroy AWS infrastructure
-cd devops_tools/terraform && terraform destroy
+# Automated smooth rollback of all cluster and AWS resources
+make rollback
+
+# OR manual teardown:
+cd devops_tools/terraform && terraform destroy -auto-approve
 
 # Remove local Docker resources
 make clean

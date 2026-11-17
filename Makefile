@@ -18,7 +18,7 @@ JENKINS_DIR    := devops_tools/jenkins
 
 .DEFAULT_GOAL  := help
 
-.PHONY: help \
+.PHONY: help deploy rollback deploy-status deploy-plan \
 	build up up-build down restart logs ps status clean shell exec test-api health scan \
 	tf-init tf-plan tf-apply tf-output tf-destroy \
 	ansible-ping ansible-deploy \
@@ -38,6 +38,21 @@ help: ## Show this help menu
 	@echo ""
 	@echo "Targets:"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+# ──────────────────────────────────────────────────────────────
+# ⚡ One-Command Deployment & Automated Rollback
+# ──────────────────────────────────────────────────────────────
+deploy: ## Run full automated deployment with auto-rollback on error
+	@./orchestrate.sh deploy
+
+rollback: ## Smoothly teardown all cloud & cluster resources fault-free
+	@./orchestrate.sh rollback
+
+deploy-status: ## Check live status of deployment and infrastructure
+	@./orchestrate.sh status
+
+deploy-plan: ## Run preflight check and show Terraform execution plan
+	@./orchestrate.sh plan
 
 # ──────────────────────────────────────────────────────────────
 # 🐳 Docker & Local Application
