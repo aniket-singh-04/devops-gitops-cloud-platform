@@ -20,6 +20,14 @@ pipeline {
         nodejs 'node26'   // Node.js tool configured in Jenkins global settings
     }
 
+    // ────────────── Automated Triggers ──────────────
+    triggers {
+        // Automatically checks GitHub every 2 minutes for new commits (zero manual UI click)
+        pollSCM('H/2 * * * *')
+        // Instant trigger on GitHub webhook push event
+        githubPush()
+    }
+
     // ────────────── Environment Variables ──────────────
     environment {
         DOCKERHUB_CREDS  = credentials('dockerhub-credentials')  // Jenkins credential ID

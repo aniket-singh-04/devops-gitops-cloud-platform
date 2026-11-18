@@ -220,12 +220,22 @@ kubectl apply -f devops_tools/argocd/project.yaml
 kubectl apply -f devops_tools/argocd/application.yaml
 ```
 
-### Step 5 — Configure Jenkins
+### Step 5 — Jenkins CI/CD (100% Automated as Code)
 
-1. Access Jenkins at `http://localhost:8080`
-2. Add DockerHub credentials (ID: `dockerhub-credentials`)
-3. Create a Pipeline job pointing to this repository (`devops_tools/jenkins/Jenkinsfile`)
-4. The Jenkinsfile handles the rest automatically
+Jenkins is configured entirely as code via Groovy bootstrap scripts ([devops_tools/jenkins/init.groovy.d/](file:///home/ashish/Original/Drive%20(B)/DevOps/04_Docker/deployment/codes/devops_tools/jenkins/init.groovy.d/)):
+- **Zero Setup Wizard**: Setup wizard is automatically bypassed.
+- **Auto Admin Account**: Created automatically (`admin` / `admin123`).
+- **Auto DockerHub Credentials**: Injected as `dockerhub-credentials` from environment variables.
+- **Auto Pipeline Job**: `devops-pipeline` is automatically provisioned and configured pointing to `main` branch.
+- **Auto Triggering**: Pre-configured with Poll SCM (every 2m) and Webhooks (`triggers { pollSCM('H/2 * * * *'); githubPush() }`).
+
+```bash
+# Start Jenkins and Buildah agent (if not running make deploy)
+make jenkins-up
+
+# Access Jenkins Dashboard (No setup required!)
+# URL: http://localhost:8080 (User: admin, Password: admin123)
+```
 
 ### Step 6 — Deploy
 

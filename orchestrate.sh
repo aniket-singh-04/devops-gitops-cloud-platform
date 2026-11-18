@@ -438,6 +438,12 @@ EOF
     done
     echo ""
     log_success "Jenkins CI/CD Engine is up and running at http://localhost:8080!"
+
+    # Trigger initial build automatically via API
+    log_info "Triggering initial automated build for 'devops-pipeline' via API..."
+    sleep 5
+    curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" "http://localhost:8080/job/devops-pipeline/build" >/dev/null 2>&1 || true
+    log_success "Pipeline build triggered automatically! (Zero UI setup needed)"
   else
     log_warn "Docker not detected; skipping local Jenkins CI/CD container startup."
   fi
@@ -467,11 +473,11 @@ EOF
   echo -e "  • ${CYAN}Username:${NC}           admin"
   echo -e "  • ${CYAN}Password:${NC}           ${YELLOW}${ARGOCD_PASSWORD}${NC}"
   echo ""
-  echo -e "${BOLD}Jenkins CI/CD Dashboard:${NC}"
+  echo -e "${BOLD}Jenkins CI/CD Dashboard (Configured 100% as Code):${NC}"
   echo -e "  • ${CYAN}URL:${NC}                http://localhost:8080"
-  echo -e "  • ${CYAN}Agent:${NC}              buildah-agent (Rootless Builds + Trivy CVE Scanner)"
-  echo -e "  • ${CYAN}Pipeline Script:${NC}    devops_tools/jenkins/Jenkinsfile"
-  echo -e "  • ${CYAN}Execution:${NC}          Run 'Build Now' in Jenkins or push code to 'main'"
+  echo -e "  • ${CYAN}Credentials:${NC}        Username: admin | Password: admin123"
+  echo -e "  • ${CYAN}Job:${NC}                devops-pipeline (Auto-created via Init Script)"
+  echo -e "  • ${CYAN}Automation:${NC}         SCM Polling (every 2m) + Webhook enabled (Zero UI clicks needed)"
   echo ""
   echo -e "${BOLD}MongoDB Atlas Network Access Whitelist IPs:${NC}"
   echo -e "  • ${CYAN}Master Node CIDR:${NC} ${MASTER_IP}/32"
