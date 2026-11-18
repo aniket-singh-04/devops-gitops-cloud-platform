@@ -52,6 +52,7 @@ STATE_INVENTORY_CREATED=false
 STATE_ANSIBLE_DEPLOYED=false
 STATE_K8S_APPLIED=false
 STATE_ARGOCD_APPLIED=false
+STATE_JENKINS_STARTED=false
 ROLLING_BACK=false
 
 # ── Logging Functions ─────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ STATE_INVENTORY_CREATED=${STATE_INVENTORY_CREATED}
 STATE_ANSIBLE_DEPLOYED=${STATE_ANSIBLE_DEPLOYED}
 STATE_K8S_APPLIED=${STATE_K8S_APPLIED}
 STATE_ARGOCD_APPLIED=${STATE_ARGOCD_APPLIED}
+STATE_JENKINS_STARTED=${STATE_JENKINS_STARTED}
 MASTER_IP="${MASTER_IP:-}"
 WORKER_IP="${WORKER_IP:-}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-}"
@@ -147,10 +149,20 @@ perform_rollback() {
 
   load_state
 
-  # Step 1: Teardown ArgoCD Application and Project if applied
+  # Step 1: Teardown Jenkins CI services if running
+  if [ "${STATE_JENKINS_STARTED}" = true ] || [ "$mode" = "manual" ]; then
+    log_info "[Rollback 1/5] Stopping local Jenkins CI/CD services..."
+    if command -v docker >/dev/null 2>&1 && [ -d "${JENKINS_DIR}" ]; then
+      (cd "${JENKINS_DIR}" && docker compose down) 2>/dev/null || true
+    fi
+    STATE_JENKINS_STARTED=false
+    save_state
+  fi
+
+  # Step 2: Teardown ArgoCD Application and Project if applied
   if [ "${STATE_ARGOCD_APPLIED}" = true ] || [ "$mode" = "manual" ]; then
     if [ -n "${MASTER_IP:-}" ] && [ -n "${SSH_KEY_FILE:-}" ] && [ -f "${SSH_KEY_FILE}" ]; then
-      log_info "[Rollback 1/4] Removing ArgoCD GitOps resources from cluster..."
+      log_info "[Rollback 2/5] Removing ArgoCD GitOps resources from cluster..."
       ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
         "k3s kubectl delete -f - --ignore-not-found=true" << 'EOF' 2>/dev/null || true
 $(cat "${ARGOCD_DIR}/application.yaml" 2>/dev/null || true)
@@ -164,10 +176,10 @@ EOF
     save_state
   fi
 
-  # Step 2: Delete Kubernetes workloads and namespace
+  # Step 3: Delete Kubernetes workloads and namespace
   if [ "${STATE_K8S_APPLIED}" = true ] || [ "$mode" = "manual" ]; then
     if [ -n "${MASTER_IP:-}" ] && [ -n "${SSH_KEY_FILE:-}" ] && [ -f "${SSH_KEY_FILE}" ]; then
-      log_info "[Rollback 2/4] Deleting application workloads & devops-app namespace..."
+      log_info "[Rollback 3/5] Deleting application workloads & devops-app namespace..."
       ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
         "k3s kubectl delete namespace devops-app --ignore-not-found=true --timeout=30s" 2>/dev/null || true
     fi
@@ -175,9 +187,9 @@ EOF
     save_state
   fi
 
-  # Step 3: Destroy Terraform Infrastructure
+  # Step 4: Destroy Terraform Infrastructure
   if [ "${STATE_TF_APPLIED}" = true ] || [ -f "${TF_DIR}/terraform.tfstate" ]; then
-    log_info "[Rollback 3/4] Destroying AWS cloud infrastructure via Terraform..."
+    log_info "[Rollback 4/5] Destroying AWS cloud infrastructure via Terraform..."
     if command -v terraform >/dev/null 2>&1 && [ -d "${TF_DIR}" ]; then
       (cd "${TF_DIR}" && terraform destroy -auto-approve) || log_warn "Terraform destroy encountered a non-fatal warning."
     else
@@ -187,8 +199,8 @@ EOF
     save_state
   fi
 
-  # Step 4: Clean up generated inventory and state
-  log_info "[Rollback 4/4] Cleaning up generated files and state..."
+  # Step 5: Clean up generated inventory and state
+  log_info "[Rollback 5/5] Cleaning up generated files and state..."
   rm -f "${ANSIBLE_DIR}/inventory/hosts.ini"
   cleanup_state
 
@@ -395,7 +407,42 @@ EOF
   STATE_ARGOCD_APPLIED=true
   save_state
 
-  # ── STEP 6: Validation & Health Check
+  # ── STEP 6: Launch & Trigger Jenkins CI/CD Engine
+  log_phase "JENKINS_SETUP" "Starting local Jenkins Master and Buildah CI agent"
+  if command -v docker >/dev/null 2>&1; then
+    # Ensure external network and volume exist for Jenkins
+    docker network create ci-net 2>/dev/null || true
+    docker volume create jenkins_home 2>/dev/null || true
+    docker volume create trivy-cache 2>/dev/null || true
+
+    log_info "Launching Jenkins Server & Buildah Agent via Docker Compose..."
+    (
+      cd "${JENKINS_DIR}"
+      docker compose up -d
+    )
+    STATE_JENKINS_STARTED=true
+    save_state
+
+    # Wait for Jenkins port 8080 to become responsive
+    log_info "Waiting for Jenkins HTTP service (http://localhost:8080) to be responsive..."
+    local j_attempt=1
+    local j_max=20
+    while ! curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ 2>/dev/null | grep -qE "200|403|302"; do
+      if [ "${j_attempt}" -ge "${j_max}" ]; then
+        log_warn "Jenkins server is completing initialization in background."
+        break
+      fi
+      echo -n "."
+      sleep 3
+      j_attempt=$((j_attempt + 1))
+    done
+    echo ""
+    log_success "Jenkins CI/CD Engine is up and running at http://localhost:8080!"
+  else
+    log_warn "Docker not detected; skipping local Jenkins CI/CD container startup."
+  fi
+
+  # ── STEP 7: Validation & Health Check
   log_phase "VERIFICATION" "Verifying application status and cluster health"
 
   # Retrieve ArgoCD initial admin password
@@ -419,6 +466,12 @@ EOF
   echo -e "  • ${CYAN}URL:${NC}                https://localhost:8080"
   echo -e "  • ${CYAN}Username:${NC}           admin"
   echo -e "  • ${CYAN}Password:${NC}           ${YELLOW}${ARGOCD_PASSWORD}${NC}"
+  echo ""
+  echo -e "${BOLD}Jenkins CI/CD Dashboard:${NC}"
+  echo -e "  • ${CYAN}URL:${NC}                http://localhost:8080"
+  echo -e "  • ${CYAN}Agent:${NC}              buildah-agent (Rootless Builds + Trivy CVE Scanner)"
+  echo -e "  • ${CYAN}Pipeline Script:${NC}    devops_tools/jenkins/Jenkinsfile"
+  echo -e "  • ${CYAN}Execution:${NC}          Run 'Build Now' in Jenkins or push code to 'main'"
   echo ""
   echo -e "${BOLD}MongoDB Atlas Network Access Whitelist IPs:${NC}"
   echo -e "  • ${CYAN}Master Node CIDR:${NC} ${MASTER_IP}/32"
@@ -474,10 +527,17 @@ show_status() {
     echo -e "  • Ansible Cluster Setup:   ${STATE_ANSIBLE_DEPLOYED}"
     echo -e "  • K8s Workloads Applied:   ${STATE_K8S_APPLIED}"
     echo -e "  • ArgoCD Configured:       ${STATE_ARGOCD_APPLIED}"
+    echo -e "  • Jenkins Started:         ${STATE_JENKINS_STARTED}"
     echo -e "  • Master IP:               ${MASTER_IP:-N/A}"
     echo -e "  • Worker IP:               ${WORKER_IP:-N/A}"
   else
     echo -e "  • No active deployment state found (.deploy_state is empty or removed)."
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    echo ""
+    log_info "Jenkins Docker Containers:"
+    docker ps --filter "name=jenkins" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
   fi
 
   if [ -d "${TF_DIR}" ] && [ -f "${TF_DIR}/terraform.tfstate" ]; then

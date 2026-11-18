@@ -123,7 +123,7 @@ A Node.js HTTP service built with Express.js and Mongoose:
 
 ### ⚡ Option A: One-Command Automated Deployment (Recommended)
 
-Run the full end-to-end pipeline with a single command. It provisions AWS infrastructure, creates Ansible inventories dynamically, hardens nodes, installs K3s, and configures ArgoCD GitOps.
+Run the full end-to-end pipeline with a single command. It provisions AWS infrastructure via Terraform, generates dynamic Ansible inventories, hardens nodes and installs K3s, configures ArgoCD GitOps, and launches the local Jenkins CI/CD engine (with Buildah & Trivy).
 
 > [!IMPORTANT]
 > **Automatic Failure Reversal**: If any step or command fails during deployment, the orchestrator automatically intercepts the error and rolls back all created resources in reverse order, ensuring zero orphaned cloud resources or unexpected AWS bills.
