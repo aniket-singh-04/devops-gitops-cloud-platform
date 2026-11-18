@@ -14,9 +14,13 @@ services:
     ports:
       - "4444:4444"
 
-    environment: # this is where you can define environment variables for your application and it is overriden by the .env file if it exists and not overridden by the docker-compose command line
-      - NODE_ENV=production
-      - PORT=4444
+    env_file:
+      - path: .env
+        required: false
+
+    environment: # Dynamic environment variables loaded from .env or system env
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=${PORT:-4444}
       - MONGO_URI=${MONGO_URI:-}
 
     healthcheck:

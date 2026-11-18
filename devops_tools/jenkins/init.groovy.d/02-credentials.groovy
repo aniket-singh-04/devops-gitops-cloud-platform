@@ -15,12 +15,12 @@ def systemStore = instance.getExtensionList('com.cloudbees.plugins.credentials.S
 if (systemStore && systemStore.size() > 0) {
     def store = systemStore[0].getStore()
     def env = System.getenv()
-    def dhUser = env.getOrDefault('DOCKERHUB_USERNAME', 'aniket04')
-    def dhPass = env.getOrDefault('DOCKERHUB_PASSWORD', 'default_token')
+    def dhUser = env.getOrDefault('DOCKERHUB_USERNAME', '')
+    def dhPass = env.getOrDefault('DOCKERHUB_PASSWORD', '')
 
     // Check if dockerhub-credentials already exists
     def existing = store.getCredentials(domain).find { it.id == 'dockerhub-credentials' }
-    if (existing == null) {
+    if (existing == null && dhUser && dhPass) {
         def credentials = new UsernamePasswordCredentialsImpl(
             CredentialsScope.GLOBAL,
             'dockerhub-credentials',
@@ -30,8 +30,10 @@ if (systemStore && systemStore.size() > 0) {
         )
         store.addCredentials(domain, credentials)
         println "--> [JCasC Init] Successfully registered 'dockerhub-credentials' for user: ${dhUser}"
-    } else {
+    } else if (existing != null) {
         println "--> [JCasC Init] 'dockerhub-credentials' already exists."
+    } else {
+        println "--> [JCasC Init] DOCKERHUB_USERNAME or DOCKERHUB_PASSWORD not set in env; skipping auto-credentials creation."
     }
 } else {
     println "--> [JCasC Init] Note: Credentials plugin store not yet ready."

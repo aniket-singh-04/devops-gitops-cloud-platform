@@ -385,12 +385,26 @@ EOF
   STATE_K8S_APPLIED=true
   save_state
 
-  # Apply MongoDB Secret from local template
-  log_info "Applying database secrets..."
-  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
-    "k3s kubectl apply -f -" << EOF
+  # Apply MongoDB Secret (sourced dynamically from .env if present, otherwise uses template)
+  log_info "Configuring database credentials into Kubernetes Secret..."
+  local env_mongo_uri=""
+  if [ -f "${SCRIPT_DIR}/.env" ]; then
+    env_mongo_uri=$(grep -E '^\s*MONGO_URI\s*=' "${SCRIPT_DIR}/.env" | head -1 | sed -E 's/^\s*MONGO_URI\s*=\s*"?([^"]*)"?/\1/' || echo "")
+  fi
+
+  if [ -n "${env_mongo_uri}" ]; then
+    log_info "Injecting MONGO_URI from root .env file into Kubernetes secret..."
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
+      "k3s kubectl create secret generic mongodb-secret -n devops-app \
+        --from-literal=MONGO_URI='${env_mongo_uri}' \
+        --dry-run=client -o yaml | k3s kubectl apply -f -"
+  else
+    log_info "Applying template mongodb-secret from ${K8S_DIR}/secret.yaml..."
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
+      "k3s kubectl apply -f -" << EOF
 $(cat "${K8S_DIR}/secret.yaml")
 EOF
+  fi
 
   # Apply ArgoCD Project & Application
   log_info "Applying ArgoCD GitOps project and application..."

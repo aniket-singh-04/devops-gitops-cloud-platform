@@ -50,7 +50,8 @@ This project follows enterprise-grade DevSecOps best practices across all 7 laye
 - **Automated CVE Scanning**: **Trivy** scans every image for `HIGH` and `CRITICAL` vulnerabilities in the Jenkins pipeline prior to DockerHub registry push.
 
 ### 3. Secrets & Credential Management
-- **Zero Secrets in Code**: No passwords, tokens, or private keys are committed to Git.
+- **Zero Secrets in Code**: No passwords, tokens, or private keys are committed to Git or baked into container images.
+- **Dynamic Environment Loading**: The application natively loads `.env` files via `process.loadEnvFile()`. Any new environment variable (e.g. `MONGO_URI`, `JWT_SECRET`, `API_KEY`) added to `.env` is automatically picked up without modifying source code.
 - **Repository Exclusions**: Both [.gitignore](file:///home/ashish/Original/Drive%20(B)/DevOps/04_Docker/deployment/codes/.gitignore) and [.dockerignore](file:///home/ashish/Original/Drive%20(B)/DevOps/04_Docker/deployment/codes/.dockerignore) block:
   - Local environment files (`.env`, `.env.*`)
   - Terraform state files (`*.tfstate`, `*.tfstate.*`)

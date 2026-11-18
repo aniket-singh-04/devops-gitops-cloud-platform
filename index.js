@@ -1,5 +1,11 @@
+import fs from "node:fs";
 import app from "./app.js";
 import connectDB from "./db.js";
+
+// Automatically load environment variables from .env file if present (Node.js 20+)
+if (fs.existsSync(".env") && typeof process.loadEnvFile === "function") {
+    process.loadEnvFile(".env");
+}
 
 const PORT = process.env.PORT || 4444;
 
