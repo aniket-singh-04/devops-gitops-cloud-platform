@@ -1,358 +1,207 @@
-# Complete DevOps Deployment Project
+# Complete Enterprise DevSecOps & GitOps Platform
 
-A production-grade DevOps project that takes a simple Node.js application through the full deployment lifecycle — from infrastructure provisioning to GitOps-driven Kubernetes deployments.
-
-The application is intentionally minimal. The real value is the **platform around it**: CI/CD pipelines, infrastructure as code, configuration management, container orchestration, and GitOps.
+A production-grade, fault-tolerant DevSecOps platform that takes a containerized Express.js microservice through the full deployment and observability lifecycle — powered by **Terraform**, **Ansible**, **K3s Kubernetes**, **ArgoCD**, **Jenkins**, **SonarQube**, **OWASP**, **Trivy**, **Prometheus**, and **Grafana**.
 
 ---
 
-## Architecture Overview
+## 🏛️ Architecture Overview
 
-```
-Developer → Git Push → Jenkins CI/CD → DockerHub → ArgoCD → K3s Cluster
-                              │
-                    Terraform (AWS Infra)
-                              │
-                    Ansible (K3s Setup)
-```
+The system architecture follows a decoupled **Shift-Left DevSecOps** and **Declarative GitOps** model:
 
-### How It Works
+```mermaid
+flowchart TD
+    subgraph SCM["Source Control"]
+        Dev["Developer"] -->|git push / make redeploy| GH["GitHub Repository"]
+    end
 
-1. **Terraform** provisions AWS infrastructure (VPC, EC2 instances, security groups)
-2. **Ansible** configures the EC2 instances and installs K3s (lightweight Kubernetes)
-3. **Jenkins** builds the Docker image, scans for vulnerabilities, pushes to DockerHub
-4. **ArgoCD** watches the Git repository and automatically deploys changes to K3s
-5. **K3s** runs the application with rolling updates and health checks
+    subgraph CI["Jenkins CI Job (devops-ci-pipeline)"]
+        GH -->|Pull Source Code| JCI["Jenkins CI Engine"]
+        JCI -->|1. Scan Dependencies| OWASP["OWASP Dependency-Check"]
+        OWASP -->|2. SAST & Quality Gate| Sonar["SonarQube Quality Gate"]
+        Sonar -->|3. Repo Filesystem Scan| TrivyFS["Trivy Filesystem Scan"]
+        TrivyFS -->|4. Daemonless Build & Verify| DockerBuild["Docker / Buildah Engine"]
+        DockerBuild -->|5. Image Vulnerability Scan| TrivyImg["Trivy Image Scan"]
+        TrivyImg -->|6. Push Tagged Image| DReg["DockerHub Registry"]
+        DReg -->|7. Auto-trigger on Success| TriggerCD["Trigger CD Pipeline"]
+    end
 
----
+    subgraph CD["Jenkins CD Job (devops-cd-pipeline)"]
+        TriggerCD --> JCD["Jenkins CD Engine"]
+        JCD -->|1. Update Image Tag| K8sManifest["devops_tools/k8s/deployment.yaml"]
+        K8sManifest -->|2. Commit with [skip ci]| GHManifest["GitHub GitOps Branch/Repo"]
+    end
 
-## Tech Stack
+    subgraph GitOps["ArgoCD & Kubernetes Cluster"]
+        GHManifest -->|GitOps Auto-Detect & Pull| Argo["ArgoCD Controller"]
+        Argo -->|Declarative Sync & Deploy| K8s["K3s / Kubernetes Cluster"]
+        K8s -->|Pods: devops-app| Pods["Application Workloads"]
+    end
 
-| Tool | Purpose | Directory |
-|------|---------|-----------|
-| **Docker** | Containerise the application | `Dockerfile`, `docker-compose.yml` |
-| **Jenkins** | CI/CD pipeline (build, scan, push) | `devops_tools/jenkins/` |
-| **Terraform** | AWS infrastructure provisioning | `devops_tools/terraform/` |
-| **Ansible** | Server configuration and K3s install | `devops_tools/ansible/` |
-| **K3s** | Lightweight Kubernetes cluster | `devops_tools/k8s/` |
-| **ArgoCD** | GitOps continuous deployment | `devops_tools/argocd/` |
-| **AWS** | Cloud provider (VPC, EC2) | `devops_tools/terraform/` |
-| **MongoDB Atlas** | Managed NoSQL cloud database | `db.js`, `devops_tools/k8s/secret.yaml` |
-| **Trivy** | Container image vulnerability scanning | Integrated in Jenkins |
-| **Buildah** | Rootless container image builds | Integrated in Jenkins |
+    subgraph Observability["Observability & Alerting Stack"]
+        Pods -->|Scrape Metrics| Prom["Prometheus Server (9090)"]
+        Prom -->|Auto-provisioned Dashboards| Graf["Grafana Dashboards (3000)"]
+        Prom -->|Alert Rules: CrashLoop / Down| AlertM["Alertmanager (9093)"]
+        AlertM -->|Email Notifications| Email["Gmail / SMTP Alerts"]
+    end
 
----
-
-## Application
-
-A Node.js HTTP service built with Express.js and Mongoose:
-
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /` | Server information & MongoDB connection status |
-| `GET /health` | Health check & DB heartbeat (used by K8s probes) |
-
----
-
-## Repository Layout
-
-```
-.
-├── app.js                          # Express.js routes
-├── db.js                           # MongoDB Atlas connection & pooling logic
-├── index.js                        # Application entry point
-├── package.json                    # Node.js dependencies (express, mongoose)
-├── .env.example                    # Sample environment variables (MONGO_URI)
-├── Dockerfile                      # Multi-stage container build
-├── docker-compose.yml              # Local development setup
-├── Makefile                        # CLI shortcuts for Docker
-│
-└── devops_tools/                   # Unified DevOps Tooling & Infrastructure
-    ├── ansible/                    # Configuration Management
-    │   ├── ansible.cfg             # Ansible settings
-    │   ├── inventory/
-    │   │   └── hosts.ini.example   # Example inventory
-    │   ├── playbooks/
-    │   │   └── site.yml            # Main playbook entry point
-    │   └── roles/
-    │       ├── common/             # Base packages, kernel tuning
-    │       ├── k3s-master/         # K3s server installation
-    │       └── k3s-worker/         # K3s agent join cluster
-    │
-    ├── argocd/                     # GitOps Configuration
-    │   ├── project.yaml            # ArgoCD project (RBAC)
-    │   ├── application.yaml        # ArgoCD app (sync config)
-    │   └── README.md               # ArgoCD setup guide
-    │
-    ├── jenkins/                    # CI/CD Pipeline
-    │   ├── Jenkinsfile             # CI/CD pipeline definition
-    │   ├── docker-compose.yml      # Jenkins server setup
-    │   └── .env                    # Jenkins environment (not committed)
-    │
-    ├── k8s/                        # Kubernetes Manifests
-    │   ├── namespace.yaml          # App namespace
-    │   ├── secret.yaml             # MongoDB Atlas connection URI secret
-    │   ├── deployment.yaml         # Pod spec with health probes & DB env
-    │   ├── service.yaml            # ClusterIP service
-    │   ├── ingress.yaml            # Traefik ingress routing
-    │   └── hpa.yaml                # Horizontal Pod Autoscaler
-    │
-    └── terraform/                  # AWS Infrastructure as Code
-        ├── providers.tf            # AWS provider and backend config
-        ├── variables.tf            # Input variables
-        ├── vpc.tf                  # VPC, subnets, IGW, routes
-        ├── security-groups.tf      # Firewall rules for K3s
-        ├── ec2.tf                  # Master and worker instances
-        ├── outputs.tf              # IPs, SSH commands, Atlas whitelist CIDRs
-        └── terraform.tfvars.example # Example variable values
+    subgraph Foundations["Infrastructure as Code & Configuration"]
+        TF["Terraform (AWS VPC, EC2, SGs)"] -->|Dynamic Inventory| Ans["Ansible (Node Hardening & K3s)"]
+        Ans -.-> K8s
+    end
 ```
 
 ---
 
-## Getting Started
+## 🛠️ Complete Tech Stack
 
-### Prerequisites
-
-- AWS account with IAM credentials configured (`aws configure`)
-- Terraform >= 1.5.0
-- Ansible >= 2.15
-- Docker and Docker Compose
-- SSH key pair created in AWS (`key_pair_name`)
+| Domain | Tool | Purpose | Directory / Configuration |
+| :--- | :--- | :--- | :--- |
+| **Infrastructure as Code** | **Terraform** | AWS VPC, Subnets, Internet Gateways, Security Groups, and EC2 nodes | `devops_tools/terraform/` |
+| **Configuration Management** | **Ansible** | OS hardening, dynamic inventory, multi-node K3s setup, and monitoring deploy | `devops_tools/ansible/` |
+| **Container Engine** | **Docker & Buildah** | Local service composition and daemonless container builds | `Dockerfile`, `docker-compose.yml` |
+| **Continuous Integration** | **Jenkins** | Automated CI pipeline with JCasC init scripts (`init.groovy.d/`) | `devops_tools/jenkins/Jenkinsfile.ci` |
+| **Code Quality & SAST** | **SonarQube** | Static code analysis, security hotspots, and quality gates | `sonar-project.properties` |
+| **Dependency Scanning** | **OWASP Dependency-Check**| Scans application dependencies for known CVEs | Integrated in CI pipeline |
+| **Vulnerability Scanning** | **Trivy** | Filesystem vulnerability/secret scan & container image scan | Integrated in CI pipeline |
+| **Container Registry** | **DockerHub** | Production container registry storage | `docker.io/<username>/devops-app` |
+| **Continuous Delivery** | **Jenkins CD Job** | Automated manifest version update and commit with `[skip ci]` | `devops_tools/jenkins/Jenkinsfile.cd` |
+| **GitOps Engine** | **ArgoCD** | Declarative synchronization and self-healing deployment to K8s | `devops_tools/argocd/` |
+| **Container Orchestration** | **K3s (Kubernetes)** | Highly available, lightweight Kubernetes cluster running app workloads | `devops_tools/k8s/` |
+| **Metrics Collection** | **Prometheus** | Cluster, node, and microservice metric scraping | `devops_tools/k8s/monitoring/prometheus.yaml` |
+| **Visualization** | **Grafana** | Real-time monitoring dashboards (auto-provisioned Prometheus datasource)| `devops_tools/k8s/monitoring/grafana.yaml` |
+| **Alerting & Notifications**| **Alertmanager** | Pod crash and downtime email notifications via Gmail SMTP | `devops_tools/k8s/monitoring/alertmanager.yaml` |
+| **Database** | **MongoDB Atlas** | Fully managed NoSQL cloud database injected via Kubernetes secret | `db.js`, `devops_tools/k8s/secret.yaml` |
 
 ---
 
-### ⚡ Option A: One-Command Automated Deployment (Recommended)
+## 📋 Prerequisites Checklist
 
-Run the full end-to-end pipeline with a single command. It provisions AWS infrastructure via Terraform, generates dynamic Ansible inventories, hardens nodes and installs K3s, configures ArgoCD GitOps, and launches the local Jenkins CI/CD engine (with Buildah & Trivy).
+Before running the deployment, ensure the following are installed and configured:
 
-> [!IMPORTANT]
-> **Automatic Failure Reversal**: If any step or command fails during deployment, the orchestrator automatically intercepts the error and rolls back all created resources in reverse order, ensuring zero orphaned cloud resources or unexpected AWS bills.
+### 1. CLI Tools
+* **Docker & Docker Compose v2+**: `sudo apt install -y docker.io docker-compose-v2`
+* **Terraform v1.5+**: `sudo apt install -y terraform`
+* **Ansible v2.14+**: `sudo apt install -y ansible`
+* **Core Utilities**: `sudo apt install -y openssh-client jq curl`
+* **kubectl** *(optional for local management)*: Kubernetes CLI
 
+### 2. AWS Credentials
+Export your AWS access credentials:
 ```bash
-# 1. Copy and configure your AWS variables once
+export AWS_ACCESS_KEY_ID="AKIAxxxxxxxxxxxxxxxx"
+export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+export AWS_DEFAULT_REGION="ap-south-1"
+```
+
+### 3. SSH Key Pair
+Create an RSA key pair in AWS EC2 named `devops-key` (or your choice). Save the `.pem` file to `~/.ssh/` and restrict permissions:
+```bash
+chmod 400 ~/.ssh/devops-key.pem
+```
+
+### 4. Configuration Files (3 Files)
+
+#### A. Configure Terraform (`devops_tools/terraform/terraform.tfvars`)
+```bash
 cp devops_tools/terraform/terraform.tfvars.example devops_tools/terraform/terraform.tfvars
-# Set your actual key_pair_name and dockerhub_username
-
-# 2. Execute full deployment in one command
-make deploy
-# OR: ./orchestrate.sh deploy
+```
+Update:
+```hcl
+aws_region         = "ap-south-1"
+project_name       = "devops-project"
+environment        = "dev"
+key_pair_name      = "devops-key"                  # Exact name of AWS Key Pair
+allowed_ssh_cidr   = "0.0.0.0/0"                   # Or "YOUR_IP/32"
+dockerhub_username = "your-dockerhub-username"
 ```
 
-#### Smooth On-Demand Rollback (At Any Time)
-Even from a smooth, healthy running state, you can tear down everything cleanly with zero residual costs:
+#### B. Configure Jenkins & SonarQube (`devops_tools/jenkins/.env`)
 ```bash
-make rollback
-# OR: ./orchestrate.sh rollback
+cp devops_tools/jenkins/.env.example devops_tools/jenkins/.env
+```
+Update:
+```env
+JENKINS_IMAGE=jenkins-img:lst
+JENKINS_ADMIN_USER=admin
+JENKINS_ADMIN_PASSWORD=admin123
+DOCKERHUB_USERNAME=your-dockerhub-username
+DOCKERHUB_PASSWORD=your-dockerhub-token
+SONARQUBE_URL=http://sonarqube:9000
 ```
 
----
-
-### 🛠️ Option B: Step-by-Step Manual Deployment
-
+#### C. Configure Application & Database (Root `.env`)
 ```bash
-cd devops_tools/terraform
-
-# Copy and edit the variables
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your values
-
-# Initialise, plan, and apply
-terraform init
-terraform plan
-terraform apply
+cp .env.example .env
+```
+Update:
+```env
+PORT=4444
+NODE_ENV=production
+MONGO_URI=mongodb+srv://<username>:<password>@cluster0.abcde.mongodb.net/devops_prod?retryWrites=true&w=majority
 ```
 
-Note the outputs:
-- `k3s_master_public_ip` & `k3s_worker_public_ip` — used in Ansible inventory.
-- `mongodb_atlas_whitelist_ips` — the exact CIDRs (`<IP>/32`) to whitelist in **MongoDB Atlas Network Access**.
-
 ---
 
-### Step 2 — Configure MongoDB Atlas Network Access
+## ⚡ Unified CLI Commands (Makefile & Orchestrator)
 
-Before running the cluster workloads, allow outbound connections from your K3s EC2 nodes:
-1. Log in to [MongoDB Atlas Console](https://cloud.mongodb.com/).
-2. Navigate to **Security** ➜ **Network Access** ➜ **IP Access List** ➜ Click **Add IP Address**.
-3. Add the two node public IPs from Terraform output (`mongodb_atlas_whitelist_ips`):
-   - `k3s_master_public_ip/32` (e.g. `13.233.xx.xx/32`)
-   - `k3s_worker_public_ip/32` (e.g. `13.126.xx.xx/32`)
-   *(For temporary testing / local dev, add your current public IP via `curl ifconfig.me`/32 or use `0.0.0.0/0` with strong authentication).*
-4. Under **Database Access**, create a user with `readWriteAnyDatabase` and copy the connection string.
-
----
-
-### Step 3 — Configure Servers with Ansible
+All operations are automated through the root [Makefile](file:///home/ashish/Original/Drive%20(B)/DevOps/04_Docker/deployment/codes/Makefile) and [orchestrate.sh](file:///home/ashish/Original/Drive%20(B)/DevOps/04_Docker/deployment/codes/orchestrate.sh):
 
 ```bash
-cd devops_tools/ansible
+# ───────────────── 🚀 Full Deploy & Redeploy ─────────────────
+make deploy                 # Full end-to-end deployment with automated rollback on error
+make redeploy               # Fast redeploy: commits changes, pushes to Git, and triggers CI/CD
+make redeploy MSG="new fix" # Redeploy with custom git commit message
 
-# Create inventory from the example
-cp inventory/hosts.ini.example inventory/hosts.ini
-# Replace MASTER_PUBLIC_IP and WORKER_PUBLIC_IP with Terraform outputs
+# ───────────────── 🔄 Manual Pipeline Triggers ─────────────────
+make trigger-ci             # Trigger Jenkins CI pipeline via REST API
+make trigger-ci PUSH=true   # Commit & push local changes first, then trigger CI
+make trigger-cd TAG=12      # Trigger Jenkins CD pipeline for a specific Docker image tag
 
-# Run the full setup
-ansible-playbook playbooks/site.yml
-```
+# ───────────────── 🔍 Status & Validation ─────────────────────
+make deploy-status          # Inspect live status of cloud nodes, containers, and pipelines
+make deploy-plan            # Run preflight validation and display Terraform execution plan
 
-This installs K3s on the master and joins the worker to the cluster.
+# ───────────────── 📊 Observability & Port Forwarding ─────────
+make monitoring-port-forward# Forwards Grafana (3000) and Prometheus (9090) to localhost
+make sonar-logs             # Tail live logs for SonarQube container
+make jenkins-logs           # Tail live logs for Jenkins container
 
-### Step 4 — Install ArgoCD & Configure Database Secret
-
-```bash
-# SSH into the master node
-ssh -i ~/.ssh/your-key.pem ubuntu@MASTER_IP
-
-# Install ArgoCD
-kubectl create namespace argocd
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-kubectl wait --for=condition=ready pod --all -n argocd --timeout=300s
-
-# Create application namespace
-kubectl create namespace devops-app --dry-run=client -o yaml | kubectl apply -f -
-
-# Create MongoDB secret (replace with your actual Atlas connection URI)
-kubectl create secret generic mongodb-secret -n devops-app \
-  --from-literal=MONGO_URI="mongodb+srv://<username>:<password>@cluster0.mongodb.net/devops_db?retryWrites=true&w=majority" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# Apply the GitOps configuration
-kubectl apply -f devops_tools/argocd/project.yaml
-kubectl apply -f devops_tools/argocd/application.yaml
-```
-
-### Step 5 — Jenkins CI/CD (100% Automated as Code)
-
-Jenkins is configured entirely as code via Groovy bootstrap scripts ([devops_tools/jenkins/init.groovy.d/](file:///home/ashish/Original/Drive%20(B)/DevOps/04_Docker/deployment/codes/devops_tools/jenkins/init.groovy.d/)):
-- **Zero Setup Wizard**: Setup wizard is automatically bypassed.
-- **Auto Admin Account**: Created automatically (`admin` / `admin123`).
-- **Auto DockerHub Credentials**: Injected as `dockerhub-credentials` from environment variables.
-- **Auto Pipeline Job**: `devops-pipeline` is automatically provisioned and configured pointing to `main` branch.
-- **Auto Triggering**: Pre-configured with Poll SCM (every 2m) and Webhooks (`triggers { pollSCM('H/2 * * * *'); githubPush() }`).
-
-```bash
-# Start Jenkins and Buildah agent (if not running make deploy)
-make jenkins-up
-
-# Access Jenkins Dashboard (No setup required!)
-# URL: http://localhost:8080 (User: admin, Password: admin123)
-```
-
-### Step 6 — Deploy
-
-Push any code change to `main`:
-
-```bash
-git add . && git commit -m "feat: your change" && git push
-```
-
-Jenkins builds, scans, and pushes the image. ArgoCD detects the manifest change and syncs to K3s. Zero-touch deployment. ✅
-
----
-
-## CI/CD Pipeline Stages
-
-```
-┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
-│ Checkout │ → │ Install  │ → │  Build   │ → │  Verify  │
-│   SCM    │   │  npm ci  │   │  Image   │   │  Health  │
-└──────────┘   └──────────┘   └──────────┘   └──────────┘
-                                                   │
-┌──────────┐   ┌──────────┐   ┌──────────┐        ▼
-│  Update  │ ← │  Push to │ ← │  Trivy   │   ┌──────────┐
-│ K8s YAML │   │ DockerHub│   │   Scan   │   │  Health  │
-└──────────┘   └──────────┘   └──────────┘   │  Check   │
-     │                                        └──────────┘
-     ▼
- ArgoCD Sync → K3s Rolling Update
+# ───────────────── 🔄 Smooth Teardown & Rollback ──────────────
+make rollback               # Safely destroy all AWS resources, cluster workloads, and containers
 ```
 
 ---
 
-## Makefile Automation CLI Cheatsheet
+## 🔁 GitOps Infinite Loop Prevention
 
-The root `Makefile` provides unified shortcuts for all tools in this project:
-
-```bash
-# ── ⚡ One-Command Orchestration & Rollback ──
-make deploy         # One-command full deployment (with auto-rollback on error)
-make rollback       # Smooth on-demand teardown of cluster & cloud resources
-make deploy-status  # Check live status of deployment and infrastructure
-make deploy-plan    # Run preflight check and show Terraform execution plan
-
-# ── Docker & Local Dev ──
-make build          # Build application Docker image
-make up-build       # Build and run containers in background
-make test-api       # Curl test / and /health endpoints
-make scan           # Run Trivy vulnerability scan
-make clean          # Remove containers, volumes, networks
-
-# ── Terraform (AWS) ──
-make tf-init        # Initialize Terraform in devops_tools/terraform
-make tf-plan        # Show Terraform planned infrastructure
-make tf-apply       # Provision AWS VPC, Subnets, EC2 nodes
-make tf-output      # Display IPs and MongoDB Atlas whitelist CIDRs
-make tf-destroy     # Teardown all AWS cloud resources
-
-# ── Ansible (K3s) ──
-make ansible-ping   # Test SSH connectivity to cluster nodes
-make ansible-deploy # Execute playbook to install and configure K3s
-
-# ── Kubernetes & ArgoCD ──
-make k8s-apply      # Apply Kubernetes manifests (namespace, deployment, secret, etc.)
-make k8s-status     # View pods, svc, ingress, and HPA in devops-app namespace
-make argocd-apply   # Apply ArgoCD Project & Application definitions
-make argocd-status  # Check ArgoCD sync and health status
-
-# ── Jenkins CI/CD ──
-make jenkins-up     # Launch local Jenkins and Buildah agent
-make jenkins-logs   # Follow Jenkins server logs
-make jenkins-down   # Stop Jenkins services
-```
+When Jenkins CD commits updated manifests back to GitHub, the pipeline eliminates circular trigger loops through:
+1. **`[skip ci]` Directive**: The CD commit message includes `[skip ci]`. GitHub and Jenkins SCM polling automatically ignore this commit.
+2. **`git diff --staged --quiet` Guard**: If the deployment manifest already contains the target tag, no commit is generated.
+3. **Dedicated Bot Identity**: Commits are authored by `Jenkins CD Bot <jenkins-cd@devops.internal>`.
 
 ---
 
-## Security
+## 🌐 Default Dashboard Access
 
-- No credentials stored in the repository
-- `.env` files excluded from Git and Docker images
-- Trivy scans every image for HIGH/CRITICAL vulnerabilities
-- K8s pods run with resource limits (prevent noisy-neighbour)
-- SSH restricted by security group CIDR
-- Non-root container user in Dockerfile
-
----
-
-## Cleanup & Rollback
-
-```bash
-# Automated smooth rollback of all cluster and AWS resources
-make rollback
-
-# OR manual teardown:
-cd devops_tools/terraform && terraform destroy -auto-approve
-
-# Remove local Docker resources
-make clean
-```
+| Portal | Local URL | Default Credentials | Description |
+| :--- | :--- | :--- | :--- |
+| **Jenkins CI/CD** | `http://localhost:8080` | `admin` / `admin123` | JCasC auto-configured pipelines (`devops-ci-pipeline`, `devops-cd-pipeline`) |
+| **SonarQube** | `http://localhost:9000` | `admin` / `admin` | Code quality, vulnerability inspection, and SAST rules |
+| **ArgoCD** | `https://localhost:8080` *(via SSH tunnel)* | `admin` / *(auto-generated)* | GitOps synchronization and cluster state self-healing |
+| **Grafana** | `http://localhost:3000` *(via SSH tunnel)* | `admin` / `admin123` | Metrics visualization (Prometheus datasource pre-connected) |
+| **Prometheus** | `http://localhost:9090` *(via SSH tunnel)* | None | Real-time metric scraping and alerting evaluation |
+| **Alertmanager**| `http://localhost:9093` *(via SSH tunnel)* | None | Gmail SMTP notification routing on pod or node failure |
 
 ---
 
-## Project Status
+## 🔒 Security Best Practices Implemented
 
-| Phase | Area | Status |
-|-------|------|--------|
-| 1 | Node.js + Docker | ✅ Done |
-| 2 | Docker Compose + Makefile | ✅ Done |
-| 3 | Git + GitHub | ✅ Done |
-| 4 | Jenkins CI/CD Pipeline | ✅ Done |
-| 5 | Trivy Security Scanning | ✅ Done |
-| 6 | Terraform (AWS VPC, EC2) | ✅ Done |
-| 7 | Ansible (K3s provisioning) | ✅ Done |
-| 8 | Kubernetes Manifests (K3s) | ✅ Done |
-| 9 | ArgoCD GitOps | ✅ Done |
+* **Shift-Left Security**: OWASP dependency analysis, SonarQube quality gates, and Trivy filesystem scanning run before any container is built.
+* **Least Privilege**: Application pods run with dedicated non-root users, security contexts, read-only root filesystems, and strict CPU/Memory requests and limits.
+* **Zero Hardcoded Secrets**: Secrets are sourced dynamically from environment variables, mounted into Kubernetes `Secret` objects, and excluded from version control via `.gitignore`.
+* **Fault-Free Rollback**: An automated trap (`trap 'handle_error $LINENO' ERR INT`) reverses all provisioned resources in reverse order if any deployment step fails.
 
 ---
 
-## License
-
+## 📄 License
 ISC
