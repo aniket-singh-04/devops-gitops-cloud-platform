@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────────────────────
 # Master DevOps Makefile
-# Unified control center for Docker, Jenkins, Terraform, Ansible,
-# Kubernetes (K3s), and ArgoCD workflows
+# Unified control center for Docker, Jenkins, SonarQube, Terraform,
+# Ansible, Kubernetes (K3s), ArgoCD, and Prometheus/Grafana Observability
 # ──────────────────────────────────────────────────────────────
 
 DOC_COM        := docker compose
@@ -13,18 +13,20 @@ SERVICE        ?= app
 TF_DIR         := devops_tools/terraform
 ANSIBLE_DIR    := devops_tools/ansible
 K8S_DIR        := devops_tools/k8s
+MONITORING_DIR := devops_tools/k8s/monitoring
 ARGOCD_DIR     := devops_tools/argocd
 JENKINS_DIR    := devops_tools/jenkins
 
 .DEFAULT_GOAL  := help
 
-.PHONY: help deploy rollback deploy-status deploy-plan \
+.PHONY: help deploy redeploy trigger-ci trigger-cd rollback deploy-status deploy-plan \
 	build up up-build down restart logs ps status clean shell exec test-api health scan \
 	tf-init tf-plan tf-apply tf-output tf-destroy \
 	ansible-ping ansible-deploy \
 	k8s-apply k8s-status k8s-delete \
+	monitoring-apply monitoring-status monitoring-port-forward \
 	argocd-apply argocd-status \
-	jenkins-up jenkins-down jenkins-logs
+	jenkins-up jenkins-down jenkins-logs sonar-logs sonar-scan
 
 # ──────────────────────────────────────────────────────────────
 # 📖 Help & Usage
@@ -37,18 +39,27 @@ help: ## Show this help menu
 	@echo "Usage: make [target] [VARIABLE=value]"
 	@echo ""
 	@echo "Targets:"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # ──────────────────────────────────────────────────────────────
-# ⚡ One-Command Deployment & Automated Rollback
+# ⚡ One-Command Deployment, Redeployment & Rollback
 # ──────────────────────────────────────────────────────────────
 deploy: ## Run full automated deployment with auto-rollback on error
 	@./orchestrate.sh deploy
 
+redeploy: ## One-command redeploy: commit, push, and trigger Jenkins CI/CD
+	@./orchestrate.sh redeploy "$(MSG)"
+
+trigger-ci: ## Manually trigger Jenkins CI pipeline via API (PUSH=true to push first)
+	@if [ "$(PUSH)" = "true" ]; then ./orchestrate.sh trigger-ci --push; else ./orchestrate.sh trigger-ci; fi
+
+trigger-cd: ## Manually trigger Jenkins CD pipeline (e.g. make trigger-cd TAG=12)
+	@./orchestrate.sh trigger-cd $(TAG)
+
 rollback: ## Smoothly teardown all cloud & cluster resources fault-free
 	@./orchestrate.sh rollback
 
-deploy-status: ## Check live status of deployment and infrastructure
+deploy-status: ## Check live status of deployment, containers, and infrastructure
 	@./orchestrate.sh status
 
 deploy-plan: ## Run preflight check and show Terraform execution plan
@@ -128,7 +139,7 @@ ansible-deploy: ## Run Ansible playbook to harden nodes and install K3s
 # ──────────────────────────────────────────────────────────────
 # ☸️ Kubernetes (K3s Manifests)
 # ──────────────────────────────────────────────────────────────
-k8s-apply: ## Apply all Kubernetes manifests to current cluster
+k8s-apply: ## Apply all Kubernetes application manifests
 	kubectl apply -f $(K8S_DIR)/
 
 k8s-status: ## Check status of application pods, services, ingress, and HPA
@@ -136,6 +147,20 @@ k8s-status: ## Check status of application pods, services, ingress, and HPA
 
 k8s-delete: ## Delete application workloads from cluster
 	kubectl delete -f $(K8S_DIR)/
+
+# ──────────────────────────────────────────────────────────────
+# 📊 Observability (Prometheus, Grafana, Alertmanager)
+# ──────────────────────────────────────────────────────────────
+monitoring-apply: ## Deploy Prometheus, Grafana, and Alertmanager to K3s
+	kubectl apply -f $(MONITORING_DIR)/
+
+monitoring-status: ## Check status of monitoring pods and services
+	kubectl get all -n monitoring
+
+monitoring-port-forward: ## Port forward Prometheus (9090) and Grafana (3000) locally
+	@echo "Forwarding Grafana to http://localhost:3000 and Prometheus to http://localhost:9090..."
+	@kubectl port-forward svc/grafana -n monitoring 3000:3000 & \
+	 kubectl port-forward svc/prometheus -n monitoring 9090:9090
 
 # ──────────────────────────────────────────────────────────────
 # 🐙 ArgoCD (GitOps)
@@ -148,13 +173,19 @@ argocd-status: ## View ArgoCD application sync and health status
 	kubectl get applications -n argocd
 
 # ──────────────────────────────────────────────────────────────
-# 🚀 Jenkins CI/CD
+# 🚀 Jenkins CI/CD & SonarQube
 # ──────────────────────────────────────────────────────────────
-jenkins-up: ## Start local Jenkins server and Buildah agent
+jenkins-up: ## Start local Jenkins server, SonarQube, and Buildah agent
 	cd $(JENKINS_DIR) && docker compose up -d
 
-jenkins-down: ## Stop Jenkins server
+jenkins-down: ## Stop Jenkins and SonarQube services
 	cd $(JENKINS_DIR) && docker compose down
 
 jenkins-logs: ## View Jenkins container logs
-	cd $(JENKINS_DIR) && docker compose logs -f
+	cd $(JENKINS_DIR) && docker compose logs -f jenkins
+
+sonar-logs: ## View SonarQube container logs
+	cd $(JENKINS_DIR) && docker compose logs -f sonarqube
+
+sonar-scan: ## Run local SonarQube static code scanner
+	npx --yes sonarqube-scanner

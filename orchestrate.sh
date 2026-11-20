@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# DevOps Unified Deployment & Rollback Orchestrator
+# DevOps Unified Deployment, GitOps & Rollback Orchestrator
 # End-to-End One-Command Automation:
-#   Terraform (AWS) ➜ Ansible (K3s) ➜ Kubernetes & ArgoCD (GitOps) ➜ Validation
+#   Terraform (AWS) ➜ Ansible (K3s) ➜ Observability (Prometheus/Grafana/Alertmanager)
+#   ➜ ArgoCD (GitOps) ➜ Jenkins CI/CD (OWASP, SonarQube, Trivy) ➜ Validation
 #
 # Features:
-#   - Automatic Rollback on Any Error: Reverses all changes in reverse order
-#     if any step fails, preventing orphaned cloud resources and costs.
-#   - Smooth On-Demand Rollback: Gracefully tears down workloads, ArgoCD,
-#     and cloud infrastructure even from a healthy, running state.
-#   - Zero Manual IP Copy-Paste: Automatically extracts Terraform outputs
-#     and populates Ansible inventory.
+#   - One-Command Deploy & Redeploy: Full provisioning or fast git-push CI/CD trigger
+#   - Fault-Free Auto-Rollback: Cleans up all resources if any step fails
+#   - Manual Rollback on Demand: Graceful teardown with zero orphaned cloud costs
+#   - DevSecOps CI/CD: Automated SonarQube, OWASP, Trivy, and GitOps sync
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -eo pipefail
@@ -52,6 +51,7 @@ STATE_INVENTORY_CREATED=false
 STATE_ANSIBLE_DEPLOYED=false
 STATE_K8S_APPLIED=false
 STATE_ARGOCD_APPLIED=false
+STATE_MONITORING_APPLIED=false
 STATE_JENKINS_STARTED=false
 ROLLING_BACK=false
 
@@ -89,6 +89,7 @@ STATE_INVENTORY_CREATED=${STATE_INVENTORY_CREATED}
 STATE_ANSIBLE_DEPLOYED=${STATE_ANSIBLE_DEPLOYED}
 STATE_K8S_APPLIED=${STATE_K8S_APPLIED}
 STATE_ARGOCD_APPLIED=${STATE_ARGOCD_APPLIED}
+STATE_MONITORING_APPLIED=${STATE_MONITORING_APPLIED}
 STATE_JENKINS_STARTED=${STATE_JENKINS_STARTED}
 MASTER_IP="${MASTER_IP:-}"
 WORKER_IP="${WORKER_IP:-}"
@@ -98,7 +99,7 @@ EOF
 
 load_state() {
   if [ -f "${STATE_FILE}" ]; then
-    # shellcheck disable=SC1090
+    # shellcheck source=/dev/null
     source "${STATE_FILE}"
   fi
 }
@@ -107,40 +108,36 @@ cleanup_state() {
   rm -f "${STATE_FILE}"
 }
 
-# ── Error Handler & Automatic Rollback ────────────────────────────────────────
+# ── Automated Error & Rollback Handler ────────────────────────────────────────
 handle_error() {
-  local exit_code="$1"
-  local line_no="$2"
-  local command="$3"
+  local exit_code=$?
+  local line_no=$1
 
-  # Prevent recursive traps
+  # Prevent recursion if an error occurs inside rollback itself
   if [ "${ROLLING_BACK}" = true ]; then
-    log_error "Secondary error during rollback at line ${line_no}. Exiting."
-    exit 1
+    log_error "Critical error during rollback routine at line ${line_no}. Aborting."
+    exit "${exit_code}"
   fi
+
+  # Normal exits (code 0) or manual graceful exit
+  if [ "${exit_code}" -eq 0 ]; then
+    return 0
+  fi
+
+  echo ""
+  log_error "Automation failed at Phase '${CURRENT_PHASE}' (line ${line_no}) with exit code ${exit_code}!"
+  log_warn "Starting automated rollback to tear down resources and eliminate orphaned cloud costs..."
+
   ROLLING_BACK=true
-
-  echo ""
-  echo -e "${RED}${BOLD}╔══════════════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${RED}${BOLD}║                 🚨 DEPLOYMENT FAILURE DETECTED                      ║${NC}"
-  echo -e "${RED}${BOLD}╚══════════════════════════════════════════════════════════════════════╝${NC}"
-  log_error "Command failed: '${command}' (exit code: ${exit_code}) at line ${line_no}"
-  log_error "Failed during phase: ${CURRENT_PHASE}"
-  echo ""
-  log_warn "Initiating AUTOMATIC REVERSAL of all provisioned resources..."
-  log_warn "This ensures zero residual state and prevents unintended cloud billing."
-  echo ""
-
   perform_rollback "automatic"
 
   echo ""
-  echo -e "${GREEN}${BOLD}✔ Automatic reversal completed cleanly.${NC}"
-  echo -e "${YELLOW}Please resolve the issue above and run 'make deploy' to retry.${NC}"
+  log_error "Deployment halted and state reversed safely. Inspect logs above for the root cause."
   exit "${exit_code}"
 }
 
-# Trap unexpected errors, Ctrl+C, and termination signals
-trap 'handle_error $? $LINENO "$BASH_COMMAND"' ERR SIGINT SIGTERM
+# Trap ERR and INT signals to guarantee clean state recovery
+trap 'handle_error $LINENO' ERR INT
 
 # ── Rollback Execution Engine ─────────────────────────────────────────────────
 perform_rollback() {
@@ -149,9 +146,9 @@ perform_rollback() {
 
   load_state
 
-  # Step 1: Teardown Jenkins CI services if running
+  # Step 1: Teardown Jenkins CI & SonarQube services if running
   if [ "${STATE_JENKINS_STARTED}" = true ] || [ "$mode" = "manual" ]; then
-    log_info "[Rollback 1/5] Stopping local Jenkins CI/CD services..."
+    log_info "[Rollback 1/6] Stopping local Jenkins CI/CD and SonarQube services..."
     if command -v docker >/dev/null 2>&1 && [ -d "${JENKINS_DIR}" ]; then
       (cd "${JENKINS_DIR}" && docker compose down) 2>/dev/null || true
     fi
@@ -162,7 +159,7 @@ perform_rollback() {
   # Step 2: Teardown ArgoCD Application and Project if applied
   if [ "${STATE_ARGOCD_APPLIED}" = true ] || [ "$mode" = "manual" ]; then
     if [ -n "${MASTER_IP:-}" ] && [ -n "${SSH_KEY_FILE:-}" ] && [ -f "${SSH_KEY_FILE}" ]; then
-      log_info "[Rollback 2/5] Removing ArgoCD GitOps resources from cluster..."
+      log_info "[Rollback 2/6] Removing ArgoCD GitOps resources from cluster..."
       ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
         "k3s kubectl delete -f - --ignore-not-found=true" << 'EOF' 2>/dev/null || true
 $(cat "${ARGOCD_DIR}/application.yaml" 2>/dev/null || true)
@@ -176,10 +173,21 @@ EOF
     save_state
   fi
 
-  # Step 3: Delete Kubernetes workloads and namespace
+  # Step 3: Delete Observability Stack (monitoring namespace)
+  if [ "${STATE_MONITORING_APPLIED}" = true ] || [ "$mode" = "manual" ]; then
+    if [ -n "${MASTER_IP:-}" ] && [ -n "${SSH_KEY_FILE:-}" ] && [ -f "${SSH_KEY_FILE}" ]; then
+      log_info "[Rollback 3/6] Deleting Prometheus, Grafana, and Alertmanager monitoring resources..."
+      ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
+        "k3s kubectl delete namespace monitoring --ignore-not-found=true --timeout=30s" 2>/dev/null || true
+    fi
+    STATE_MONITORING_APPLIED=false
+    save_state
+  fi
+
+  # Step 4: Delete Kubernetes workloads and application namespace
   if [ "${STATE_K8S_APPLIED}" = true ] || [ "$mode" = "manual" ]; then
     if [ -n "${MASTER_IP:-}" ] && [ -n "${SSH_KEY_FILE:-}" ] && [ -f "${SSH_KEY_FILE}" ]; then
-      log_info "[Rollback 3/5] Deleting application workloads & devops-app namespace..."
+      log_info "[Rollback 4/6] Deleting application workloads & devops-app namespace..."
       ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
         "k3s kubectl delete namespace devops-app --ignore-not-found=true --timeout=30s" 2>/dev/null || true
     fi
@@ -187,9 +195,9 @@ EOF
     save_state
   fi
 
-  # Step 4: Destroy Terraform Infrastructure
+  # Step 5: Destroy Terraform Infrastructure
   if [ "${STATE_TF_APPLIED}" = true ] || [ -f "${TF_DIR}/terraform.tfstate" ]; then
-    log_info "[Rollback 4/5] Destroying AWS cloud infrastructure via Terraform..."
+    log_info "[Rollback 5/6] Destroying AWS cloud infrastructure via Terraform..."
     if command -v terraform >/dev/null 2>&1 && [ -d "${TF_DIR}" ]; then
       (cd "${TF_DIR}" && terraform destroy -auto-approve) || log_warn "Terraform destroy encountered a non-fatal warning."
     else
@@ -199,77 +207,65 @@ EOF
     save_state
   fi
 
-  # Step 5: Clean up generated inventory and state
-  log_info "[Rollback 5/5] Cleaning up generated files and state..."
+  # Step 6: Clean up generated inventory and state
+  log_info "[Rollback 6/6] Cleaning up generated files and state..."
   rm -f "${ANSIBLE_DIR}/inventory/hosts.ini"
   cleanup_state
 
   log_success "All resources have been reversed cleanly."
 }
 
-# ── Helper: Preflight Verification ────────────────────────────────────────────
+# ── Preflight Verification ────────────────────────────────────────────────────
 check_prerequisites() {
-  log_phase "PREFLIGHT" "Verifying environment, credentials, and dependencies"
+  log_phase "PREFLIGHT_CHECK" "Validating CLI binaries and configurations"
 
   local missing_tools=()
-
-  for tool in terraform ansible-playbook ssh curl jq; do
+  for tool in terraform ansible ansible-playbook ssh scp jq curl; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
       missing_tools+=("${tool}")
     fi
   done
 
-  if [ ${#missing_tools[@]} -gt 0 ]; then
-    log_error "The following required CLI tools are not installed or not in PATH:"
-    for item in "${missing_tools[@]}"; do
-      echo -e "   - ${RED}${item}${NC}"
-    done
-    echo ""
-    log_info "Please install missing dependencies before running the deployment."
-    exit 1
+  if [ ${#missing_tools[@]} -ne 0 ]; then
+    log_error "Missing required CLI tools: ${missing_tools[*]}"
+    log_info "Please install the missing tools and try again."
+    return 1
   fi
 
-  # Check terraform.tfvars
   if [ ! -f "${TF_DIR}/terraform.tfvars" ]; then
-    log_warn "terraform.tfvars not found at ${TF_DIR}/terraform.tfvars"
-    if [ -f "${TF_DIR}/terraform.tfvars.example" ]; then
-      log_info "Creating terraform.tfvars from terraform.tfvars.example..."
-      cp "${TF_DIR}/terraform.tfvars.example" "${TF_DIR}/terraform.tfvars"
-      log_warn "Please review ${TF_DIR}/terraform.tfvars and ensure 'key_pair_name' matches your AWS EC2 key."
-    else
-      log_error "Missing terraform.tfvars.example. Cannot proceed."
-      exit 1
+    log_error "Missing '${TF_DIR}/terraform.tfvars'!"
+    log_info "Create it from template: cp ${TF_DIR}/terraform.tfvars.example ${TF_DIR}/terraform.tfvars"
+    return 1
+  fi
+
+  # Auto-detect SSH Key from terraform.tfvars
+  local tf_key_path
+  tf_key_path=$(grep -E '^\s*private_key_path\s*=' "${TF_DIR}/terraform.tfvars" | head -1 | sed -E 's/^\s*private_key_path\s*=\s*"?([^"]*)"?/\1/' || echo "")
+  
+  # Expand tilde ~ if present
+  tf_key_path="${tf_key_path/#\~/$HOME}"
+
+  if [ -n "${tf_key_path}" ] && [ -f "${tf_key_path}" ]; then
+    SSH_KEY_FILE="${tf_key_path}"
+    chmod 400 "${SSH_KEY_FILE}" 2>/dev/null || true
+    log_info "Resolved SSH Private Key: ${SSH_KEY_FILE}"
+  elif [ -f "${HOME}/.ssh/id_rsa" ]; then
+    SSH_KEY_FILE="${HOME}/.ssh/id_rsa"
+    log_info "Fallback to default SSH Key: ${SSH_KEY_FILE}"
+  else
+    log_error "Unable to locate a valid SSH private key. Check 'private_key_path' in ${TF_DIR}/terraform.tfvars"
+    return 1
+  fi
+
+  # Ensure root .env exists for application and secret injection
+  if [ ! -f "${SCRIPT_DIR}/.env" ]; then
+    if [ -f "${SCRIPT_DIR}/.env.example" ]; then
+      log_warn "Root .env not found. Auto-generating from .env.example..."
+      cp "${SCRIPT_DIR}/.env.example" "${SCRIPT_DIR}/.env"
     fi
   fi
 
-  # Resolve Key Pair Name from tfvars
-  KEY_NAME=$(grep -E '^\s*key_pair_name\s*=' "${TF_DIR}/terraform.tfvars" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/' || echo "")
-  if [ -z "${KEY_NAME}" ] || [ "${KEY_NAME}" = "your-key-pair-name" ]; then
-    log_error "Please set your actual AWS key pair name in ${TF_DIR}/terraform.tfvars (key_pair_name = \"...\")"
-    exit 1
-  fi
-
-  # Locate SSH Key File
-  SSH_KEY_FILE=""
-  if [ -n "${SSH_KEY_PATH:-}" ] && [ -f "${SSH_KEY_PATH}" ]; then
-    SSH_KEY_FILE="${SSH_KEY_PATH}"
-  elif [ -f "${HOME}/.ssh/${KEY_NAME}.pem" ]; then
-    SSH_KEY_FILE="${HOME}/.ssh/${KEY_NAME}.pem"
-  elif [ -f "${HOME}/.ssh/${KEY_NAME}" ]; then
-    SSH_KEY_FILE="${HOME}/.ssh/${KEY_NAME}"
-  elif [ -f "${SCRIPT_DIR}/${KEY_NAME}.pem" ]; then
-    SSH_KEY_FILE="${SCRIPT_DIR}/${KEY_NAME}.pem"
-  fi
-
-  if [ -z "${SSH_KEY_FILE}" ]; then
-    log_error "Could not find SSH private key for '${KEY_NAME}'."
-    log_info "Looked in: ~/.ssh/${KEY_NAME}.pem, ~/.ssh/${KEY_NAME}, and current directory."
-    log_info "Tip: export SSH_KEY_PATH=/path/to/your/key.pem and rerun."
-    exit 1
-  fi
-
-  chmod 400 "${SSH_KEY_FILE}" 2>/dev/null || true
-  log_success "Prerequisites verified! SSH key resolved: ${SSH_KEY_FILE}"
+  log_success "All preflight checks passed!"
 }
 
 # ── Helper: Wait for SSH ──────────────────────────────────────────────────────
@@ -351,7 +347,7 @@ EOF
   wait_for_ssh "${WORKER_IP}" "${SSH_KEY_FILE}"
 
   # ── STEP 3: Ansible Node Hardening & K3s Cluster Deployment
-  log_phase "ANSIBLE_DEPLOY" "Hardening nodes and installing K3s multi-node cluster"
+  log_phase "ANSIBLE_DEPLOY" "Hardening nodes, installing K3s cluster, and deploying Observability"
   (
     cd "${ANSIBLE_DIR}"
     ansible k3s_cluster -m ping
@@ -359,7 +355,7 @@ EOF
   )
   STATE_ANSIBLE_DEPLOYED=true
   save_state
-  log_success "K3s Cluster successfully installed and verified via Ansible!"
+  log_success "K3s Cluster & Observability stack successfully configured via Ansible!"
 
   # ── STEP 4: Setup ArgoCD (GitOps Engine)
   log_phase "ARGOCD_SETUP" "Installing ArgoCD controller on K3s Master"
@@ -376,8 +372,8 @@ k3s kubectl wait --for=condition=ready pod --all -n argocd --timeout=300s || tru
 EOF
   log_success "ArgoCD installed on K3s cluster!"
 
-  # ── STEP 5: Deploy Application Manifests & GitOps Definitions
-  log_phase "K8S_ARGOCD_APP" "Configuring application namespace, secrets, and GitOps sync"
+  # ── STEP 5: Deploy Application Manifests, Secrets & Observability
+  log_phase "K8S_MANIFESTS" "Configuring application namespace, secrets, observability, and GitOps sync"
 
   # Create application namespace
   ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
@@ -385,7 +381,7 @@ EOF
   STATE_K8S_APPLIED=true
   save_state
 
-  # Apply MongoDB Secret (sourced dynamically from .env if present, otherwise uses template)
+  # Apply MongoDB Secret
   log_info "Configuring database credentials into Kubernetes Secret..."
   local env_mongo_uri=""
   if [ -f "${SCRIPT_DIR}/.env" ]; then
@@ -406,6 +402,21 @@ $(cat "${K8S_DIR}/secret.yaml")
 EOF
   fi
 
+  # Apply Observability Manifests (Prometheus, Grafana, Alertmanager)
+  log_info "Applying Prometheus, Grafana, and Alertmanager manifests..."
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
+    "k3s kubectl apply -f -" << EOF
+$(cat "${K8S_DIR}/monitoring/namespace.yaml")
+---
+$(cat "${K8S_DIR}/monitoring/alertmanager.yaml")
+---
+$(cat "${K8S_DIR}/monitoring/prometheus.yaml")
+---
+$(cat "${K8S_DIR}/monitoring/grafana.yaml")
+EOF
+  STATE_MONITORING_APPLIED=true
+  save_state
+
   # Apply ArgoCD Project & Application
   log_info "Applying ArgoCD GitOps project and application..."
   ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
@@ -421,15 +432,17 @@ EOF
   STATE_ARGOCD_APPLIED=true
   save_state
 
-  # ── STEP 6: Launch & Trigger Jenkins CI/CD Engine
-  log_phase "JENKINS_SETUP" "Starting local Jenkins Master and Buildah CI agent"
+  # ── STEP 6: Launch & Trigger Jenkins CI/CD Engine & SonarQube
+  log_phase "JENKINS_SONAR_SETUP" "Starting local Jenkins Master, SonarQube, and Buildah Agent"
   if command -v docker >/dev/null 2>&1; then
-    # Ensure external network and volume exist for Jenkins
     docker network create ci-net 2>/dev/null || true
     docker volume create jenkins_home 2>/dev/null || true
     docker volume create trivy-cache 2>/dev/null || true
+    docker volume create sonarqube_data 2>/dev/null || true
+    docker volume create sonarqube_extensions 2>/dev/null || true
+    docker volume create sonarqube_logs 2>/dev/null || true
 
-    log_info "Launching Jenkins Server & Buildah Agent via Docker Compose..."
+    log_info "Launching Jenkins Server, SonarQube & Buildah Agent via Docker Compose..."
     (
       cd "${JENKINS_DIR}"
       docker compose up -d
@@ -440,7 +453,7 @@ EOF
     # Wait for Jenkins port 8080 to become responsive
     log_info "Waiting for Jenkins HTTP service (http://localhost:8080) to be responsive..."
     local j_attempt=1
-    local j_max=20
+    local j_max=25
     while ! curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ 2>/dev/null | grep -qE "200|403|302"; do
       if [ "${j_attempt}" -ge "${j_max}" ]; then
         log_warn "Jenkins server is completing initialization in background."
@@ -454,8 +467,9 @@ EOF
     log_success "Jenkins CI/CD Engine is up and running at http://localhost:8080!"
 
     # Trigger initial build automatically via API
-    log_info "Triggering initial automated build for 'devops-pipeline' via API..."
+    log_info "Triggering initial automated build for 'devops-ci-pipeline' via API..."
     sleep 5
+    curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || \
     curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" "http://localhost:8080/job/devops-pipeline/build" >/dev/null 2>&1 || true
     log_success "Pipeline build triggered automatically! (Zero UI setup needed)"
   else
@@ -463,13 +477,11 @@ EOF
   fi
 
   # ── STEP 7: Validation & Health Check
-  log_phase "VERIFICATION" "Verifying application status and cluster health"
+  log_phase "VERIFICATION" "Verifying application status, cluster health, and dashboards"
 
-  # Retrieve ArgoCD initial admin password
   ARGOCD_PASSWORD=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_FILE}" ubuntu@"${MASTER_IP}" \
     "k3s kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' 2>/dev/null | base64 -d" || echo "admin")
 
-  # Print Cluster Summary
   echo ""
   echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════════════════════╗${NC}"
   echo -e "${GREEN}${BOLD}║           🎉 ONE-COMMAND DEPLOYMENT COMPLETED SUCCESSFULLY!          ║${NC}"
@@ -481,28 +493,88 @@ EOF
   echo -e "  • ${CYAN}SSH Master:${NC}         ssh -i ${SSH_KEY_FILE} ubuntu@${MASTER_IP}"
   echo -e "  • ${CYAN}SSH Worker:${NC}         ssh -i ${SSH_KEY_FILE} ubuntu@${WORKER_IP}"
   echo ""
-  echo -e "${BOLD}ArgoCD GitOps Dashboard:${NC}"
-  echo -e "  • ${CYAN}Port-Forward Cmd:${NC}   ssh -i ${SSH_KEY_FILE} -L 8080:localhost:443 ubuntu@${MASTER_IP} 'k3s kubectl port-forward svc/argocd-server -n argocd 443:443'"
-  echo -e "  • ${CYAN}URL:${NC}                https://localhost:8080"
-  echo -e "  • ${CYAN}Username:${NC}           admin"
-  echo -e "  • ${CYAN}Password:${NC}           ${YELLOW}${ARGOCD_PASSWORD}${NC}"
+  echo -e "${BOLD}GitOps & CI/CD Portals:${NC}"
+  echo -e "  • ${CYAN}ArgoCD Dashboard:${NC}   https://localhost:8080 (Forward cmd: ssh -i ${SSH_KEY_FILE} -L 8080:localhost:443 ubuntu@${MASTER_IP} 'k3s kubectl port-forward svc/argocd-server -n argocd 443:443')"
+  echo -e "    Username: admin | Password: ${YELLOW}${ARGOCD_PASSWORD}${NC}"
+  echo -e "  • ${CYAN}Jenkins CI/CD:${NC}      http://localhost:8080 (Credentials: admin / admin123)"
+  echo -e "    Jobs: devops-ci-pipeline ➜ devops-cd-pipeline"
+  echo -e "  • ${CYAN}SonarQube Server:${NC}   http://localhost:9000 (Default: admin / admin)"
   echo ""
-  echo -e "${BOLD}Jenkins CI/CD Dashboard (Configured 100% as Code):${NC}"
-  echo -e "  • ${CYAN}URL:${NC}                http://localhost:8080"
-  echo -e "  • ${CYAN}Credentials:${NC}        Username: admin | Password: admin123"
-  echo -e "  • ${CYAN}Job:${NC}                devops-pipeline (Auto-created via Init Script)"
-  echo -e "  • ${CYAN}Automation:${NC}         SCM Polling (every 2m) + Webhook enabled (Zero UI clicks needed)"
+  echo -e "${BOLD}Observability & Alerting Stack:${NC}"
+  echo -e "  • ${CYAN}Prometheus (9090):${NC}  ssh -i ${SSH_KEY_FILE} -L 9090:localhost:9090 ubuntu@${MASTER_IP} 'k3s kubectl port-forward svc/prometheus -n monitoring 9090:9090'"
+  echo -e "  • ${CYAN}Grafana (3000):${NC}     ssh -i ${SSH_KEY_FILE} -L 3000:localhost:3000 ubuntu@${MASTER_IP} 'k3s kubectl port-forward svc/grafana -n monitoring 3000:3000'"
+  echo -e "    Grafana Login: admin / admin123 (Prometheus datasource auto-provisioned)"
+  echo -e "  • ${CYAN}Alertmanager (9093):${NC}Configured with Gmail SMTP alert notifications"
   echo ""
-  echo -e "${BOLD}MongoDB Atlas Network Access Whitelist IPs:${NC}"
-  echo -e "  • ${CYAN}Master Node CIDR:${NC} ${MASTER_IP}/32"
-  echo -e "  • ${CYAN}Worker Node CIDR:${NC} ${WORKER_IP}/32"
-  echo ""
-  echo -e "${BOLD}Rollback / Teardown Command:${NC}"
-  echo -e "  • To smoothly destroy all resources at any time: ${YELLOW}make rollback${NC} or ${YELLOW}./orchestrate.sh rollback${NC}"
+  echo -e "${BOLD}Commands for Lifecycle Management:${NC}"
+  echo -e "  • Redeploy with Code Push:  ${YELLOW}make redeploy${NC} or ${YELLOW}./orchestrate.sh redeploy${NC}"
+  echo -e "  • Manual CI Trigger:        ${YELLOW}make trigger-ci${NC} or ${YELLOW}./orchestrate.sh trigger-ci${NC}"
+  echo -e "  • Manual CD Trigger:        ${YELLOW}make trigger-cd TAG=123${NC} or ${YELLOW}./orchestrate.sh trigger-cd 123${NC}"
+  echo -e "  • Smooth Teardown/Rollback: ${YELLOW}make rollback${NC} or ${YELLOW}./orchestrate.sh rollback${NC}"
   echo ""
 
   CURRENT_PHASE="COMPLETE"
   save_state
+}
+
+# ── Fast Redeploy Flow ────────────────────────────────────────────────────────
+redeploy() {
+  log_phase "REDEPLOY" "One-Command Redeployment: Committing, Pushing & Triggering CI/CD"
+  load_state
+
+  local commit_msg="${1:-chore(app): automated one-command redeployment}"
+
+  # Stage and commit any dirty changes
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    log_info "Detected local code modifications. Committing..."
+    git add .
+    git commit -m "${commit_msg}" || true
+    log_info "Pushing latest commits to GitHub repository..."
+    git push origin HEAD:main 2>/dev/null || log_warn "Remote git push skipped; triggering pipeline on current state."
+  else
+    log_info "Working directory clean; no new code commit needed."
+  fi
+
+  # Trigger CI Job via API
+  log_info "Triggering Jenkins CI Job ('devops-ci-pipeline') via REST API..."
+  curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
+    "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || \
+  curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
+    "http://localhost:8080/job/devops-pipeline/build" >/dev/null 2>&1 || true
+
+  log_success "Redeploy triggered successfully!"
+  log_info "Jenkins CI will run OWASP, SonarQube, Trivy, build & push image, and trigger ArgoCD sync."
+}
+
+# ── Trigger CI ────────────────────────────────────────────────────────────────
+trigger_ci() {
+  local commit_push="${1:-}"
+  log_phase "TRIGGER_CI" "Triggering Jenkins CI pipeline via API"
+
+  if [ "${commit_push}" = "--push" ] || [ "${commit_push}" = "-p" ]; then
+    log_info "Committing and pushing before triggering..."
+    git add .
+    git commit -m "chore: manual code push and CI trigger" || true
+    git push origin HEAD:main 2>/dev/null || true
+  fi
+
+  curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
+    "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || \
+  curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
+    "http://localhost:8080/job/devops-pipeline/build" >/dev/null 2>&1 || true
+
+  log_success "CI Pipeline enqueued at http://localhost:8080/job/devops-ci-pipeline/"
+}
+
+# ── Trigger CD ────────────────────────────────────────────────────────────────
+trigger_cd() {
+  local tag="${1:-latest}"
+  log_phase "TRIGGER_CD" "Triggering Jenkins CD pipeline with image tag '${tag}'"
+
+  curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
+    "http://localhost:8080/job/devops-cd-pipeline/buildWithParameters?IMAGE_TAG=${tag}" >/dev/null 2>&1 || true
+
+  log_success "CD Pipeline enqueued at http://localhost:8080/job/devops-cd-pipeline/ for tag: ${tag}"
 }
 
 # ── Manual Rollback Command ───────────────────────────────────────────────────
@@ -512,10 +584,9 @@ smooth_rollback() {
   echo -e "${YELLOW}${BOLD}║              🔄 INITIATING SMOOTH ROLLBACK / TEARDOWN               ║${NC}"
   echo -e "${YELLOW}${BOLD}╚══════════════════════════════════════════════════════════════════════╝${NC}"
   echo -e "This will safely destroy all provisioned AWS cloud resources, K3s workloads,"
-  echo -e "and ArgoCD applications without leaving lingering costs."
+  echo -e "observability stack, ArgoCD, and local CI services without leaving lingering costs."
   echo ""
 
-  # Prompt for confirmation if running interactively
   if [ -t 0 ] && [ "${1:-}" != "--force" ] && [ "${1:-}" != "-f" ]; then
     read -r -p "Are you sure you want to rollback and destroy all resources? [y/N]: " confirm
     if [[ ! "${confirm}" =~ ^[yY](es)?$ ]]; then
@@ -538,7 +609,7 @@ show_status() {
   load_state
   echo ""
   echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════════════════════${NC}"
-  echo -e "${BOLD}DevOps Infrastructure & Deployment Status${NC}"
+  echo -e "${BOLD}DevOps Infrastructure, CI/CD & Observability Status${NC}"
   echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════════════════════${NC}"
 
   if [ -f "${STATE_FILE}" ]; then
@@ -546,23 +617,24 @@ show_status() {
     echo -e "  • Terraform Applied:       ${STATE_TF_APPLIED}"
     echo -e "  • Ansible Cluster Setup:   ${STATE_ANSIBLE_DEPLOYED}"
     echo -e "  • K8s Workloads Applied:   ${STATE_K8S_APPLIED}"
+    echo -e "  • Observability Applied:   ${STATE_MONITORING_APPLIED}"
     echo -e "  • ArgoCD Configured:       ${STATE_ARGOCD_APPLIED}"
-    echo -e "  • Jenkins Started:         ${STATE_JENKINS_STARTED}"
-    echo -e "  • Master IP:               ${MASTER_IP:-N/A}"
-    echo -e "  • Worker IP:               ${WORKER_IP:-N/A}"
+    echo -e "  • Jenkins & Sonar Started: ${STATE_JENKINS_STARTED}"
+    echo -e "  • Master Node IP:          ${MASTER_IP:-N/A}"
+    echo -e "  • Worker Node IP:          ${WORKER_IP:-N/A}"
   else
     echo -e "  • No active deployment state found (.deploy_state is empty or removed)."
   fi
 
   if command -v docker >/dev/null 2>&1; then
     echo ""
-    log_info "Jenkins Docker Containers:"
-    docker ps --filter "name=jenkins" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+    log_info "Local Docker Services (Jenkins, SonarQube, Buildah):"
+    docker ps --filter "name=jenkins" --filter "name=sonarqube" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
   fi
 
   if [ -d "${TF_DIR}" ] && [ -f "${TF_DIR}/terraform.tfstate" ]; then
     echo ""
-    log_info "Terraform Outputs:"
+    log_info "Terraform Cloud Outputs:"
     (cd "${TF_DIR}" && terraform output 2>/dev/null || echo "No terraform outputs available.")
   fi
 }
@@ -573,6 +645,15 @@ ACTION="${1:-deploy}"
 case "${ACTION}" in
   deploy)
     deploy_all
+    ;;
+  redeploy)
+    redeploy "${2:-}"
+    ;;
+  trigger-ci|ci)
+    trigger_ci "${2:-}"
+    ;;
+  trigger-cd|cd)
+    trigger_cd "${2:-}"
     ;;
   rollback|destroy|down)
     smooth_rollback "${2:-}"
@@ -586,14 +667,17 @@ case "${ACTION}" in
     (cd "${TF_DIR}" && terraform init && terraform plan)
     ;;
   help|--help|-h)
-    echo "Usage: $0 [deploy|rollback|status|plan|help]"
+    echo "Usage: $0 [deploy|redeploy|trigger-ci|trigger-cd|rollback|status|plan|help]"
     echo ""
     echo "Commands:"
-    echo "  deploy    - Full automated one-command deployment with auto-rollback on error (default)"
-    echo "  rollback  - Smooth, fault-tolerant teardown of all cloud & cluster resources"
-    echo "  status    - View current deployment phase, outputs, and status"
-    echo "  plan      - Run preflight check and show Terraform execution plan"
-    echo "  help      - Show this help message"
+    echo "  deploy      - Full automated one-command deployment with auto-rollback on error"
+    echo "  redeploy    - Fast redeploy: commits changes, pushes to git, and triggers CI/CD"
+    echo "  trigger-ci  - Trigger Jenkins CI pipeline via API (use --push to commit and push)"
+    echo "  trigger-cd  - Trigger Jenkins CD pipeline via API (pass image tag as param)"
+    echo "  rollback    - Smooth, fault-tolerant teardown of all cloud & cluster resources"
+    echo "  status      - View current deployment phase, outputs, and running services"
+    echo "  plan        - Run preflight check and show Terraform execution plan"
+    echo "  help        - Show this help message"
     ;;
   *)
     log_error "Unknown action: '${ACTION}'"
