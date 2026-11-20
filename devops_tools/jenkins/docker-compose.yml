@@ -11,9 +11,26 @@ services:
       JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-admin123}
       DOCKERHUB_USERNAME: ${DOCKERHUB_USERNAME:-}
       DOCKERHUB_PASSWORD: ${DOCKERHUB_PASSWORD:-}
+      SONARQUBE_URL: ${SONARQUBE_URL:-http://sonarqube:9000}
+      SONAR_TOKEN: ${SONAR_TOKEN:-}
     volumes:
       - jenkins_home:/var/jenkins_home
       - ./init.groovy.d:/var/jenkins_home/init.groovy.d:ro
+    networks:
+      - ci-net
+
+  sonarqube:
+    image: sonarqube:lts-community
+    container_name: sonarqube
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
     networks:
       - ci-net
 
@@ -30,10 +47,12 @@ services:
       JENKINS_AGENT_NAME: buildah-agent
       JENKINS_SECRET: ${JENKINS_SECRET}
       JENKINS_WEB_SOCKET: "true"
+      SONARQUBE_URL: http://sonarqube:9000
     volumes:
       - trivy-cache:/root/.cache
     depends_on:
       - jenkins
+      - sonarqube
     networks:
       - ci-net
 
@@ -42,6 +61,12 @@ volumes:
     external: true
   trivy-cache:
     name: trivy-cache
+  sonarqube_data:
+    name: sonarqube_data
+  sonarqube_extensions:
+    name: sonarqube_extensions
+  sonarqube_logs:
+    name: sonarqube_logs
 
 networks:
   ci-net:
