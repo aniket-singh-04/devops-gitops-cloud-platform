@@ -10,44 +10,78 @@ The system architecture follows a decoupled **Shift-Left DevSecOps** and **Decla
 
 ```mermaid
 flowchart TD
-    subgraph SCM["Source Control"]
-        Dev["Developer"] -->|git push / make redeploy| GH["GitHub Repository"]
+    subgraph SCM ["1. Source Control"]
+        Dev["Developer"] -->|"git push / make redeploy"| GH["GitHub Repository"]
     end
 
-    subgraph CI["Jenkins CI Job (devops-ci-pipeline)"]
-        GH -->|Pull Source Code| JCI["Jenkins CI Engine"]
-        JCI -->|1. Scan Dependencies| OWASP["OWASP Dependency-Check"]
-        OWASP -->|2. SAST & Quality Gate| Sonar["SonarQube Quality Gate"]
-        Sonar -->|3. Repo Filesystem Scan| TrivyFS["Trivy Filesystem Scan"]
-        TrivyFS -->|4. Daemonless Build & Verify| DockerBuild["Docker / Buildah Engine"]
-        DockerBuild -->|5. Image Vulnerability Scan| TrivyImg["Trivy Image Scan"]
-        TrivyImg -->|6. Push Tagged Image| DReg["DockerHub Registry"]
-        DReg -->|7. Auto-trigger on Success| TriggerCD["Trigger CD Pipeline"]
+    subgraph CI ["2. Jenkins CI Pipeline (devops-ci-pipeline)"]
+        GH -->|"Pull Source Code"| JCI["Jenkins CI Server"]
+        JCI -->|"1. Dependency Scan"| OWASP["OWASP Dependency-Check"]
+        OWASP -->|"2. Quality Gate"| Sonar["SonarQube SAST"]
+        Sonar -->|"3. Filesystem Scan"| TrivyFS["Trivy Filesystem Scan"]
+        TrivyFS -->|"4. Daemonless Build"| DBuild["Buildah Engine"]
+        DBuild -->|"5. Image Scan"| TrivyImg["Trivy Image Scan"]
+        TrivyImg -->|"6. Push Tagged Image"| DReg["DockerHub Registry"]
     end
 
-    subgraph CD["Jenkins CD Job (devops-cd-pipeline)"]
-        TriggerCD --> JCD["Jenkins CD Engine"]
-        JCD -->|1. Update Image Tag| K8sManifest["devops_tools/k8s/deployment.yaml"]
-        K8sManifest -->|2. Commit with [skip ci]| GHManifest["GitHub GitOps Branch/Repo"]
+    subgraph CD ["3. Jenkins CD Pipeline (devops-cd-pipeline)"]
+        DReg -->|"7. Trigger CD Job"| JCD["Jenkins CD Engine"]
+        JCD -->|"1. Update Image Tag"| Manifest["devops_tools/k8s/deployment.yaml"]
+        Manifest -->|"2. Commit & Push (skip-ci)"| GHCD["GitHub Repository"]
     end
 
-    subgraph GitOps["ArgoCD & Kubernetes Cluster"]
-        GHManifest -->|GitOps Auto-Detect & Pull| Argo["ArgoCD Controller"]
-        Argo -->|Declarative Sync & Deploy| K8s["K3s / Kubernetes Cluster"]
-        K8s -->|Pods: devops-app| Pods["Application Workloads"]
+    subgraph GitOps ["4. GitOps Delivery & K3s Cluster"]
+        GHCD -->|"Pull Manifests"| Argo["ArgoCD Controller"]
+        Argo -->|"Sync & Reconcile"| K8s["K3s Cluster"]
+        K8s -->|"Run Workloads"| Pods["devops-app Pods"]
     end
 
-    subgraph Observability["Observability & Alerting Stack"]
-        Pods -->|Scrape Metrics| Prom["Prometheus Server (9090)"]
-        Prom -->|Auto-provisioned Dashboards| Graf["Grafana Dashboards (3000)"]
-        Prom -->|Alert Rules: CrashLoop / Down| AlertM["Alertmanager (9093)"]
-        AlertM -->|Email Notifications| Email["Gmail / SMTP Alerts"]
+    subgraph Observability ["5. Observability & Alerting"]
+        Pods -->|"Scrape Metrics"| Prom["Prometheus (9090)"]
+        Prom -->|"Visual Dashboards"| Graf["Grafana (3000)"]
+        Prom -->|"Trigger Alerts"| AlertM["Alertmanager (9093)"]
+        AlertM -->|"Email Notifications"| Email["Gmail Alerts"]
     end
 
-    subgraph Foundations["Infrastructure as Code & Configuration"]
-        TF["Terraform (AWS VPC, EC2, SGs)"] -->|Dynamic Inventory| Ans["Ansible (Node Hardening & K3s)"]
-        Ans -.-> K8s
+    subgraph Infra ["Foundations: Infrastructure as Code"]
+        TF["Terraform (AWS VPC & EC2)"] -->|"Dynamic Inventory"| Ans["Ansible (Cluster Provisioning)"]
+        Ans -->|"Configures"| K8s
     end
+```
+
+### ASCII Architecture Flow
+
+```text
+[Developer]
+    │
+    ▼ (git push / make redeploy)
+[GitHub Repository]
+    │
+    ▼ (Pull Code)
+[Jenkins CI Job: devops-ci-pipeline]
+    │ ──► 1. OWASP Dependency-Check (CVE Analysis)
+    │ ──► 2. SonarQube SAST & Quality Gate
+    │ ──► 3. Trivy Filesystem & Secrets Scan
+    │ ──► 4. Buildah Rootless Docker Build & /health Verification
+    │ ──► 5. Trivy Container Image Scan
+    │ ──► 6. Push Image to DockerHub (tag: ${BUILD_NUMBER} & latest)
+    │
+    ▼ (Trigger CD Job upon CI Success)
+[Jenkins CD Job: devops-cd-pipeline]
+    │ ──► 1. Update devops_tools/k8s/deployment.yaml image tag
+    │ ──► 2. Commit & Push to GitHub with [skip ci]
+    │
+    ▼ (GitOps Watch & Auto-Reconcile)
+[ArgoCD Controller]
+    │
+    ▼ (Deploy & Rolling Update)
+[K3s Kubernetes Cluster] ──► Pods: devops-app
+    │
+    ▼ (Metrics Scraping & Observability)
+[Prometheus (9090)] ──► [Grafana Dashboards (3000)]
+    │
+    ▼ (Downtime / Crash Alert Routing)
+[Alertmanager (9093)] ──► [Gmail / SMTP Email Alerts]
 ```
 
 ---
