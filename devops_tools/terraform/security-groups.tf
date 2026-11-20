@@ -46,6 +46,42 @@ resource "aws_security_group" "k3s_master" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Jenkins CI/CD Engine UI
+  ingress {
+    description = "Jenkins CI/CD Engine"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # SonarQube Code & Quality Gate Server
+  ingress {
+    description = "SonarQube Server"
+    from_port   = 9000
+    to_port     = 9000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Prometheus Monitoring Server
+  ingress {
+    description = "Prometheus Metrics Server"
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Grafana Dashboards UI
+  ingress {
+    description = "Grafana Dashboards"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Flannel VXLAN — K3s inter-node networking
   ingress {
     description = "Flannel VXLAN"

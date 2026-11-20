@@ -1,6 +1,6 @@
 # ──────────────────────────────────────────────────────────────
 # Site Playbook — Main Entry Point
-# Orchestrates the full K3s cluster setup in the correct order
+# Orchestrates the full K3s cluster & Observability setup in order
 # Usage: ansible-playbook playbooks/site.yml
 # ──────────────────────────────────────────────────────────────
 ---
@@ -21,3 +21,25 @@
   become: true
   roles:
     - k3s-worker
+
+- name: Deploy Observability Stack (Prometheus, Grafana, Alertmanager)
+  hosts: k3s_master
+  become: false
+  tasks:
+    - name: Ensure monitoring manifests directory exists on master
+      ansible.builtin.file:
+        path: /home/ubuntu/monitoring
+        state: directory
+        mode: '0755'
+
+    - name: Copy monitoring manifests to master node
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../k8s/monitoring/"
+        dest: /home/ubuntu/monitoring/
+        mode: '0644'
+
+    - name: Apply monitoring namespace and stack
+      ansible.builtin.command:
+        cmd: k3s kubectl apply -f /home/ubuntu/monitoring/
+      register: monitoring_apply
+      changed_when: "'created' in monitoring_apply.stdout or 'configured' in monitoring_apply.stdout"
