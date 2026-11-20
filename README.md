@@ -9,44 +9,77 @@ A production-grade, fault-tolerant DevSecOps platform that takes a containerized
 The system architecture follows a decoupled **Shift-Left DevSecOps** and **Declarative GitOps** model:
 
 ```mermaid
-flowchart TD
-    subgraph SCM ["1. Source Control"]
-        Dev["Developer"] -->|"git push / make redeploy"| GH["GitHub Repository"]
+graph TD
+    subgraph SCM["1. Source Control"]
+        Dev["Developer"]
+        GH["GitHub Repository"]
     end
 
-    subgraph CI ["2. Jenkins CI Pipeline (devops-ci-pipeline)"]
-        GH -->|"Pull Source Code"| JCI["Jenkins CI Server"]
-        JCI -->|"1. Dependency Scan"| OWASP["OWASP Dependency-Check"]
-        OWASP -->|"2. Quality Gate"| Sonar["SonarQube SAST"]
-        Sonar -->|"3. Filesystem Scan"| TrivyFS["Trivy Filesystem Scan"]
-        TrivyFS -->|"4. Daemonless Build"| DBuild["Buildah Engine"]
-        DBuild -->|"5. Image Scan"| TrivyImg["Trivy Image Scan"]
-        TrivyImg -->|"6. Push Tagged Image"| DReg["DockerHub Registry"]
+    subgraph CI["2. Jenkins CI Pipeline"]
+        JCI["Jenkins CI Server"]
+        OWASP["OWASP Dependency-Check"]
+        Sonar["SonarQube SAST"]
+        TrivyFS["Trivy Filesystem Scan"]
+        DBuild["Docker Build Engine"]
+        TrivyImg["Trivy Image Scan"]
+        DReg["DockerHub Registry"]
     end
 
-    subgraph CD ["3. Jenkins CD Pipeline (devops-cd-pipeline)"]
-        DReg -->|"7. Trigger CD Job"| JCD["Jenkins CD Engine"]
-        JCD -->|"1. Update Image Tag"| Manifest["devops_tools/k8s/deployment.yaml"]
-        Manifest -->|"2. Commit & Push (skip-ci)"| GHCD["GitHub Repository"]
+    subgraph CD["3. Jenkins CD Pipeline"]
+        JCD["Jenkins CD Engine"]
+        Manifest["Update K8s Manifest"]
+        GHCD["GitOps Manifest Commit"]
     end
 
-    subgraph GitOps ["4. GitOps Delivery & K3s Cluster"]
-        GHCD -->|"Pull Manifests"| Argo["ArgoCD Controller"]
-        Argo -->|"Sync & Reconcile"| K8s["K3s Cluster"]
-        K8s -->|"Run Workloads"| Pods["devops-app Pods"]
+    subgraph GitOps["4. GitOps Delivery & K3s Cluster"]
+        Argo["ArgoCD Controller"]
+        K8s["K3s Cluster"]
+        Pods["devops-app Workloads"]
     end
 
-    subgraph Observability ["5. Observability & Alerting"]
-        Pods -->|"Scrape Metrics"| Prom["Prometheus (9090)"]
-        Prom -->|"Visual Dashboards"| Graf["Grafana (3000)"]
-        Prom -->|"Trigger Alerts"| AlertM["Alertmanager (9093)"]
-        AlertM -->|"Email Notifications"| Email["Gmail Alerts"]
+    subgraph Observability["5. Observability & Alerting"]
+        Prom["Prometheus Server (9090)"]
+        Graf["Grafana Dashboards (3000)"]
+        AlertM["Alertmanager (9093)"]
+        Email["Gmail Alerts"]
     end
 
-    subgraph Infra ["Foundations: Infrastructure as Code"]
-        TF["Terraform (AWS VPC & EC2)"] -->|"Dynamic Inventory"| Ans["Ansible (Cluster Provisioning)"]
-        Ans -->|"Configures"| K8s
+    subgraph Infra["Foundations: Infrastructure as Code"]
+        TF["Terraform (AWS VPC & EC2)"]
+        Ans["Ansible (Cluster Provisioning)"]
     end
+
+    %% SCM Flow
+    Dev -->|git push / redeploy| GH
+
+    %% CI Flow
+    GH -->|Pull Source Code| JCI
+    JCI -->|1. Dependency Scan| OWASP
+    OWASP -->|2. Quality Gate| Sonar
+    Sonar -->|3. Filesystem Scan| TrivyFS
+    TrivyFS -->|4. Daemonless Build| DBuild
+    DBuild -->|5. Image Scan| TrivyImg
+    TrivyImg -->|6. Push Tagged Image| DReg
+
+    %% CD Flow
+    DReg -->|7. Trigger CD Job| JCD
+    JCD -->|1. Update Image Tag| Manifest
+    Manifest -->|2. Commit with skip-ci| GHCD
+
+    %% GitOps Flow
+    GHCD -->|Pull Manifests| Argo
+    Argo -->|Sync & Reconcile| K8s
+    K8s -->|Run Workloads| Pods
+
+    %% Observability Flow
+    Pods -->|Scrape Metrics| Prom
+    Prom -->|Visual Dashboards| Graf
+    Prom -->|Trigger Alerts| AlertM
+    AlertM -->|Email Notifications| Email
+
+    %% Infra Flow
+    TF -->|Dynamic Inventory| Ans
+    Ans -->|Configures Nodes| K8s
 ```
 
 ### ASCII Architecture Flow
