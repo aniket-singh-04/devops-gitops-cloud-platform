@@ -469,8 +469,7 @@ EOF
     # Trigger initial build automatically via API
     log_info "Triggering initial automated build for 'devops-ci-pipeline' via API..."
     sleep 5
-    curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || \
-    curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" "http://localhost:8080/job/devops-pipeline/build" >/dev/null 2>&1 || true
+    curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || true
     log_success "Pipeline build triggered automatically! (Zero UI setup needed)"
   else
     log_warn "Docker not detected; skipping local Jenkins CI/CD container startup."
@@ -538,9 +537,7 @@ redeploy() {
   # Trigger CI Job via API
   log_info "Triggering Jenkins CI Job ('devops-ci-pipeline') via REST API..."
   curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
-    "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || \
-  curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
-    "http://localhost:8080/job/devops-pipeline/build" >/dev/null 2>&1 || true
+    "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || true
 
   log_success "Redeploy triggered successfully!"
   log_info "Jenkins CI will run OWASP, SonarQube, Trivy, build & push image, and trigger ArgoCD sync."
@@ -559,9 +556,7 @@ trigger_ci() {
   fi
 
   curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
-    "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || \
-  curl -s -X POST -u "${JENKINS_ADMIN_USER:-admin}:${JENKINS_ADMIN_PASSWORD:-admin123}" \
-    "http://localhost:8080/job/devops-pipeline/build" >/dev/null 2>&1 || true
+    "http://localhost:8080/job/devops-ci-pipeline/build" >/dev/null 2>&1 || true
 
   log_success "CI Pipeline enqueued at http://localhost:8080/job/devops-ci-pipeline/"
 }
