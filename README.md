@@ -188,12 +188,14 @@ cp devops_tools/jenkins/.env.example devops_tools/jenkins/.env
 ```
 Update:
 ```env
-JENKINS_IMAGE=jenkins-img:lst
+JENKINS_IMAGE=jenkins-img:lts
+JENKINS_SECRET=your-jenkins-agent-secret-here
 JENKINS_ADMIN_USER=admin
 JENKINS_ADMIN_PASSWORD=admin123
 DOCKERHUB_USERNAME=your-dockerhub-username
 DOCKERHUB_PASSWORD=your-dockerhub-token
 SONARQUBE_URL=http://sonarqube:9000
+SONAR_TOKEN=your-sonarqube-token-here
 ```
 
 #### C. Configure Application & Database (Root `.env`)
