@@ -29,6 +29,8 @@ serverless.yml
 docker-compose*.yml
 Dockerfile
 Makefile
+orchestrate.sh
+devops_tools/
 
 # OS files
 .DS_Store
