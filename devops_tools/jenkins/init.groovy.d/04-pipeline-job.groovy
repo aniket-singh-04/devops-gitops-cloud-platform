@@ -1,6 +1,6 @@
 // ──────────────────────────────────────────────────────────────
 // Jenkins Init Script 4: Create CI Pipeline Job as Code
-// Automatically provisions 'devops-ci-pipeline' & 'devops-pipeline'
+// Automatically provisions 'devops-ci-pipeline'
 // ──────────────────────────────────────────────────────────────
 import jenkins.model.*
 import org.jenkinsci.plugins.workflow.job.WorkflowJob
@@ -15,28 +15,26 @@ def repoUrl = 'https://github.com/aniket-singh-04/Complete-deployment.git'
 def branch = '*/main'
 def scriptPath = 'devops_tools/jenkins/Jenkinsfile.ci'
 
-def jobsToCreate = ['devops-ci-pipeline', 'devops-pipeline']
+def jobName = 'devops-ci-pipeline'
 
-jobsToCreate.each { jobName ->
-    try {
-        def job = instance.getItem(jobName)
-        if (job == null) {
-            job = instance.createProject(WorkflowJob.class, jobName)
-            println "--> [JCasC Init] Created WorkflowJob: '${jobName}'"
-        }
-
-        def branchSpec = Collections.singletonList(new BranchSpec(branch))
-        def remoteConfig = Collections.singletonList(new UserRemoteConfig(repoUrl, null, null, null))
-        def scm = new GitSCM(remoteConfig, branchSpec, false, Collections.emptyList(), null, null, Collections.emptyList())
-
-        def flowDefinition = new CpsScmFlowDefinition(scm, scriptPath)
-        flowDefinition.setLightweight(true)
-        job.setDefinition(flowDefinition)
-
-        job.save()
-        println "--> [JCasC Init] Pipeline job '${jobName}' configured with '${scriptPath}'"
-    } catch (Exception e) {
-        println "--> [JCasC Init] Pipeline job creation note for ${jobName}: ${e.message}"
+try {
+    def job = instance.getItem(jobName)
+    if (job == null) {
+        job = instance.createProject(WorkflowJob.class, jobName)
+        println "--> [JCasC Init] Created WorkflowJob: '${jobName}'"
     }
+
+    def branchSpec = Collections.singletonList(new BranchSpec(branch))
+    def remoteConfig = Collections.singletonList(new UserRemoteConfig(repoUrl, null, null, null))
+    def scm = new GitSCM(remoteConfig, branchSpec, false, Collections.emptyList(), null, null, Collections.emptyList())
+
+    def flowDefinition = new CpsScmFlowDefinition(scm, scriptPath)
+    flowDefinition.setLightweight(true)
+    job.setDefinition(flowDefinition)
+
+    job.save()
+    instance.save()
+    println "--> [JCasC Init] Pipeline job '${jobName}' configured with '${scriptPath}'"
+} catch (Exception e) {
+    println "--> [JCasC Init] Pipeline job creation note for ${jobName}: ${e.message}"
 }
-instance.save()
